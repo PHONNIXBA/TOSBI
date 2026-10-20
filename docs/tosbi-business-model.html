@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TOSBI — Business model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F2F4F6; --ink:#14213D; --ink-2:#3B4863; --mute:#6E7A8F;
+    --rule:#C9D0D8; --green:#1F7A5C; --green-soft:#DDEDE6;
+    --amber:#D9A441; --amber-soft:#F7ECD2; --red:#B4483E; --white:#FFFFFF;
+    --serif:"Fraunces", Georgia, serif;
+    --sans:"IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:17px;line-height:1.55}
+  body{margin:0}
+  a{color:var(--green)}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 32px}
+
+  /* Hero */
+  header{padding:64px 0 40px;border-bottom:1px solid var(--rule)}
+  .brand{font-family:var(--serif);font-weight:600;font-size:20px;letter-spacing:.01em}
+  .brand span{color:var(--mute);font-family:var(--sans);font-weight:400;font-size:15px;margin-left:12px}
+  h1{font-family:var(--serif);font-weight:400;font-size:clamp(38px,5.2vw,64px);line-height:1.05;letter-spacing:-.015em;margin:36px 0 20px;max-width:16ch}
+  .lede{font-size:20px;max-width:58ch;color:var(--ink-2);margin:0 0 36px}
+  .hero-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:48px;align-items:end}
+  .hero-fig{background:var(--white);border:1px solid var(--rule);padding:20px 20px 12px}
+  .hero-fig figcaption{font-size:14px;color:var(--mute);margin-top:8px}
+
+  /* Ledger sections */
+  section{display:grid;grid-template-columns:220px 1fr;gap:40px;padding:56px 0;border-bottom:1px solid var(--rule)}
+  section > h2{grid-column:1;font-family:var(--serif);font-weight:400;font-size:26px;line-height:1.2;margin:0;position:sticky;top:24px;align-self:start}
+  section > div{grid-column:2;max-width:70ch}
+  section > div.wide{max-width:none}
+  h3{font-family:var(--sans);font-weight:600;font-size:17px;margin:32px 0 8px}
+  p{margin:0 0 16px}
+  .note{color:var(--mute);font-size:15px}
+
+  /* Figures */
+  figure{margin:24px 0;background:var(--white);border:1px solid var(--rule);padding:20px}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{font-size:14px;color:var(--mute);margin-top:10px;max-width:70ch}
+
+  /* Tables */
+  table{width:100%;border-collapse:collapse;font-size:15.5px;margin:20px 0}
+  th{text-align:left;font-weight:600;padding:10px 12px;border-bottom:2px solid var(--ink)}
+  td{padding:10px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr.total td{font-weight:600;border-top:2px solid var(--ink);border-bottom:none}
+
+  /* Timeline (genuine sequence) */
+  ol.timeline{list-style:none;padding:0;margin:20px 0;border-left:2px solid var(--rule)}
+  ol.timeline li{padding:0 0 22px 22px;position:relative}
+  ol.timeline li::before{content:"";position:absolute;left:-7px;top:6px;width:12px;height:12px;border-radius:50%;background:var(--paper);border:2px solid var(--ink)}
+  ol.timeline li.now::before{background:var(--green);border-color:var(--green)}
+  ol.timeline b{display:block;font-weight:600}
+
+  /* Callouts */
+  .stat{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule);margin:20px 0}
+  .stat div{background:var(--white);padding:18px 20px}
+  .stat strong{display:block;font-family:var(--serif);font-weight:400;font-size:34px;line-height:1;margin-bottom:6px}
+  .stat span{font-size:14px;color:var(--mute)}
+  .box{border-left:4px solid var(--green);background:var(--green-soft);padding:16px 20px;margin:20px 0}
+  .box.amber{border-color:var(--amber);background:var(--amber-soft)}
+
+  footer{padding:40px 0 64px;color:var(--mute);font-size:14px}
+
+  @media (max-width:820px){
+    .hero-grid{grid-template-columns:1fr}
+    section{grid-template-columns:1fr;gap:12px}
+    section > h2{position:static}
+    .stat{grid-template-columns:1fr}
+  }
+  @media print{
+    html{background:#fff;font-size:12.5px}
+    section{break-inside:avoid;padding:28px 0}
+    section > h2{position:static}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="brand">TOSBI <span>Risk protection infrastructure for perpetual DEXs</span></div>
+    <div class="hero-grid">
+      <div>
+        <h1>Protection for the position a trader already has.</h1>
+        <p class="lede">TOSBI lets any perpetual DEX sell one-tap downside protection on open positions. The DEX supplies the capital and earns the premiums. We supply the contracts, pricing, settlement, and risk controls, and earn a fee on every policy. Launching on Stellar.</p>
+      </div>
+      <figure class="hero-fig">
+        <!-- Payout profile: long protection, put spread -->
+        <svg viewBox="0 0 520 300" role="img" aria-label="Payout profile of a protected long position">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6E7A8F"/></marker>
+          </defs>
+          <!-- axes -->
+          <line x1="60" y1="240" x2="500" y2="240" stroke="#6E7A8F" stroke-width="1.2" marker-end="url(#ah)"/>
+          <line x1="60" y1="240" x2="60" y2="30" stroke="#6E7A8F" stroke-width="1.2" marker-end="url(#ah)"/>
+          <text x="470" y="262" font-size="13" fill="#6E7A8F" font-family="IBM Plex Sans">XLM price at settlement</text>
+          <text x="20" y="40" font-size="13" fill="#6E7A8F" font-family="IBM Plex Sans" transform="rotate(-90 20 40)" text-anchor="end">Payout to trader</text>
+          <!-- covered band -->
+          <rect x="140" y="30" width="180" height="210" fill="#DDEDE6"/>
+          <text x="230" y="52" font-size="13" fill="#1F7A5C" text-anchor="middle" font-family="IBM Plex Sans" font-weight="600">Coverage range 25%</text>
+          <!-- payout line -->
+          <polyline points="60,90 140,90 320,240 500,240" fill="none" stroke="#14213D" stroke-width="3"/>
+          <!-- strike labels -->
+          <line x1="320" y1="240" x2="320" y2="250" stroke="#14213D"/>
+          <text x="320" y="268" font-size="13" text-anchor="middle" fill="#14213D" font-family="IBM Plex Sans">$0.20 start</text>
+          <line x1="140" y1="240" x2="140" y2="250" stroke="#14213D"/>
+          <text x="140" y="268" font-size="13" text-anchor="middle" fill="#14213D" font-family="IBM Plex Sans">$0.15 end</text>
+          <!-- max payout -->
+          <line x1="60" y1="90" x2="140" y2="90" stroke="#D9A441" stroke-width="3"/>
+          <text x="66" y="80" font-size="13" fill="#D9A441" font-family="IBM Plex Sans" font-weight="600">Max payout $250, reserved from the pool</text>
+          <!-- example point -->
+          <circle cx="212" cy="150" r="5" fill="#1F7A5C"/>
+          <text x="222" y="146" font-size="13" fill="#1F7A5C" font-family="IBM Plex Sans">$0.17 pays $150</text>
+          <!-- zero label -->
+          <text x="410" y="228" font-size="13" fill="#6E7A8F" font-family="IBM Plex Sans">Price up: pays nothing, cost was $29</text>
+        </svg>
+        <figcaption>A $1,000 long protected for one day. Payout tracks the actual loss from $0.20 down to $0.15, then stops. The trader's cost is fixed at purchase.</figcaption>
+      </figure>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section>
+  <h2>The business in one sentence</h2>
+  <div>
+    <p>We are a B2B2C infrastructure company. We do not sell to traders and we do not hold risk. We license a protection layer to perpetual DEXs, they put it in front of their traders, and every policy sold pays us a fee.</p>
+    <figure>
+      <svg viewBox="0 0 900 260" role="img" aria-label="Three-party model: TOSBI, PerpDEX, trader">
+        <!-- boxes -->
+        <rect x="30" y="80" width="230" height="100" fill="#14213D"/>
+        <text x="145" y="122" font-size="20" fill="#fff" text-anchor="middle" font-family="Fraunces">TOSBI</text>
+        <text x="145" y="148" font-size="13" fill="#C9D0D8" text-anchor="middle" font-family="IBM Plex Sans">contracts · pricing · settlement · risk</text>
+
+        <rect x="335" y="80" width="230" height="100" fill="#fff" stroke="#14213D" stroke-width="2"/>
+        <text x="450" y="122" font-size="20" fill="#14213D" text-anchor="middle" font-family="Fraunces">PerpDEX</text>
+        <text x="450" y="148" font-size="13" fill="#3B4863" text-anchor="middle" font-family="IBM Plex Sans">supplies capital · earns premiums</text>
+
+        <rect x="640" y="80" width="230" height="100" fill="#fff" stroke="#14213D" stroke-width="2"/>
+        <text x="755" y="122" font-size="20" fill="#14213D" text-anchor="middle" font-family="Fraunces">Trader</text>
+        <text x="755" y="148" font-size="13" fill="#3B4863" text-anchor="middle" font-family="IBM Plex Sans">protects a position · pays a fixed cost</text>
+
+        <!-- top flows (rightwards) -->
+        <path d="M260,105 L335,105" stroke="#1F7A5C" stroke-width="2.5" marker-end="url(#ah2)"/>
+        <text x="297" y="70" font-size="13" fill="#1F7A5C" text-anchor="middle" font-family="IBM Plex Sans">infrastructure</text>
+        <path d="M565,105 L640,105" stroke="#1F7A5C" stroke-width="2.5" marker-end="url(#ah2)"/>
+        <text x="602" y="70" font-size="13" fill="#1F7A5C" text-anchor="middle" font-family="IBM Plex Sans">"Protect" button</text>
+        <!-- bottom flows (leftwards) -->
+        <path d="M640,155 L565,155" stroke="#D9A441" stroke-width="2.5" marker-end="url(#ah3)"/>
+        <text x="602" y="205" font-size="13" fill="#B0802A" text-anchor="middle" font-family="IBM Plex Sans">premium + fee</text>
+        <path d="M335,155 L260,155" stroke="#D9A441" stroke-width="2.5" marker-end="url(#ah3)"/>
+        <text x="297" y="205" font-size="13" fill="#B0802A" text-anchor="middle" font-family="IBM Plex Sans">fee</text>
+        <!-- payout back -->
+        <path d="M450,180 L450,225 L755,225 L755,180" fill="none" stroke="#14213D" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ah4)"/>
+        <text x="602" y="248" font-size="13" fill="#3B4863" text-anchor="middle" font-family="IBM Plex Sans">payout if the market moves against the position</text>
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1F7A5C"/></marker>
+          <marker id="ah3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#D9A441"/></marker>
+          <marker id="ah4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#14213D"/></marker>
+        </defs>
+      </svg>
+      <figcaption>Capital and payout risk sit with the PerpDEX. TOSBI's revenue is a fee on volume, so our income does not depend on which way the market goes.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
+  <h2>Why this exists</h2>
+  <div>
+    <p>Perpetual futures are the largest product in crypto. The trader's central problem is liquidation: a leveraged position that moves 10% the wrong way is gone. The tools for managing that risk are a stop-loss, which throws the trader out of a position they wanted to keep, or an options hedge on a separate venue, which almost no retail trader knows how to build.</p>
+    <div class="stat">
+      <div><strong>$60T+</strong><span>perpetual futures volume in 2025, mostly offshore and increasingly on-chain</span></div>
+      <div><strong>$10B</strong><span>liquidated on a single venue in one October 2025 crash day</span></div>
+      <div><strong>0</strong><span>position-attached protection products on any on-chain perp DEX today</span></div>
+    </div>
+    <p>Bybit proved the demand. Its Perp Protect attaches an option to a perpetual position behind one button, and it has become the product traders point to when they ask for "insurance." On-chain, nothing equivalent exists. The perp DEXs that now process hundreds of billions a month have liquidation engines and insurance funds that protect <em>the venue</em>. None of them protects the trader.</p>
+    <p>That is the gap: a proven product, a market that has moved on-chain, and no one supplying it there.</p>
+  </div>
+</section>
+
+<section>
+  <h2>How the product works</h2>
+  <div>
+    <p>From the trader's side it is three choices, one price, and one automatic outcome. Every contract has a fixed start, a fixed end, and a fixed maximum, all set the moment it is bought.</p>
+    <figure>
+      <svg viewBox="0 0 900 220" role="img" aria-label="Lifecycle of a one-day protection contract">
+        <line x1="60" y1="120" x2="840" y2="120" stroke="#C9D0D8" stroke-width="4"/>
+        <!-- covered window highlight -->
+        <line x1="640" y1="120" x2="760" y2="120" stroke="#1F7A5C" stroke-width="10"/>
+        <!-- nodes -->
+        <g font-family="IBM Plex Sans" font-size="13" fill="#14213D">
+          <circle cx="60" cy="120" r="9" fill="#14213D"/>
+          <text x="60" y="80" text-anchor="middle" font-weight="600">Tue 14:32</text>
+          <text x="60" y="160" text-anchor="middle">Bought. Start price fixed,</text>
+          <text x="60" y="178" text-anchor="middle">$250 reserved from pool</text>
+
+          <circle cx="160" cy="120" r="9" fill="#fff" stroke="#14213D" stroke-width="2"/>
+          <text x="160" y="80" text-anchor="middle" font-weight="600">Tue 14:37</text>
+          <text x="160" y="160" text-anchor="middle">Active after a</text>
+          <text x="160" y="178" text-anchor="middle">5-minute delay</text>
+
+          <text x="400" y="80" text-anchor="middle" font-weight="600">24 hours</text>
+          <text x="400" y="160" text-anchor="middle">Nothing to do. Worst case</text>
+          <text x="400" y="178" text-anchor="middle">is known. Position can be closed any time</text>
+
+          <circle cx="640" cy="120" r="9" fill="#1F7A5C"/>
+          <text x="640" y="80" text-anchor="middle" font-weight="600" fill="#1F7A5C">Wed 14:12</text>
+          <text x="640" y="160" text-anchor="middle">Settlement window opens:</text>
+          <text x="640" y="178" text-anchor="middle">20-minute average price</text>
+
+          <circle cx="760" cy="120" r="9" fill="#1F7A5C"/>
+          <text x="760" y="80" text-anchor="middle" font-weight="600" fill="#1F7A5C">Wed 14:32</text>
+          <text x="760" y="160" text-anchor="middle">Expires. Payout sent,</text>
+          <text x="760" y="178" text-anchor="middle">reservation released</text>
+        </g>
+      </svg>
+      <figcaption>Early close or liquidation of the position settles the protection immediately at that price. Protection cannot be cancelled for a refund.</figcaption>
+    </figure>
+    <h3>The four outcomes of the example contract</h3>
+    <table>
+      <tr><th>XLM at settlement</th><th class="num">Position</th><th class="num">Protection pays</th><th class="num">Trader net</th></tr>
+      <tr><td>Rises to $0.23</td><td class="num">+$150</td><td class="num">$0</td><td class="num">+$121</td></tr>
+      <tr><td>Falls to $0.17</td><td class="num">−$150</td><td class="num">+$150</td><td class="num">−$29</td></tr>
+      <tr><td>Crashes to $0.10</td><td class="num">−$500</td><td class="num">+$250 (cap)</td><td class="num">−$279</td></tr>
+      <tr><td>Closed early at $0.18</td><td class="num">−$100</td><td class="num">+$100</td><td class="num">−$29</td></tr>
+    </table>
+    <p>A short position gets the mirror image: protection covers the first 25% of a <em>rise</em>, from $0.20 to $0.25, capped at $250. Rises are usually gentler than crashes, so short protection is priced from a separate volatility figure and costs about $25 on the same terms.</p>
+  </div>
+</section>
+
+<section>
+  <h2>How the money flows</h2>
+  <div>
+    <p>There is one pool of capital, owned by the PerpDEX, and one rule: the pool can never promise more than it holds. Every policy reserves its maximum payout for its whole life. If a new policy would break the rule, it isn't sold.</p>
+    <figure>
+      <svg viewBox="0 0 900 330" role="img" aria-label="Flow of premium, fee, reservation and payout">
+        <defs>
+          <marker id="af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#3B4863"/></marker>
+        </defs>
+        <!-- Trader -->
+        <rect x="30" y="120" width="170" height="80" fill="#fff" stroke="#14213D" stroke-width="2"/>
+        <text x="115" y="153" font-size="17" text-anchor="middle" fill="#14213D" font-family="Fraunces">Trader pays $29</text>
+        <text x="115" y="177" font-size="13" text-anchor="middle" fill="#3B4863" font-family="IBM Plex Sans">for $1,000 / 1 day / 25%</text>
+
+        <!-- Pool -->
+        <rect x="360" y="40" width="300" height="250" fill="#F7ECD2" stroke="#D9A441" stroke-width="2"/>
+        <text x="510" y="70" font-size="17" text-anchor="middle" fill="#14213D" font-family="Fraunces">Protection Capital (PerpDEX)</text>
+        <!-- pool bars -->
+        <rect x="390" y="95" width="240" height="170" fill="#fff" stroke="#C9D0D8"/>
+        <rect x="390" y="200" width="240" height="65" fill="#1F7A5C"/>
+        <text x="510" y="238" font-size="13" text-anchor="middle" fill="#fff" font-family="IBM Plex Sans" font-weight="600">Reserved for live policies</text>
+        <rect x="390" y="190" width="240" height="10" fill="#14213D"/>
+        <text x="510" y="150" font-size="13" text-anchor="middle" fill="#3B4863" font-family="IBM Plex Sans">Free capital</text>
+        <text x="510" y="168" font-size="13" text-anchor="middle" fill="#3B4863" font-family="IBM Plex Sans">(backs the next policy)</text>
+        <text x="650" y="199" font-size="12" fill="#14213D" font-family="IBM Plex Sans">+$250 this policy</text>
+
+        <!-- TOSBI -->
+        <rect x="360" y="300" width="300" height="0" fill="none"/>
+        <rect x="730" y="120" width="150" height="80" fill="#14213D"/>
+        <text x="805" y="153" font-size="17" text-anchor="middle" fill="#fff" font-family="Fraunces">TOSBI</text>
+        <text x="805" y="177" font-size="13" text-anchor="middle" fill="#C9D0D8" font-family="IBM Plex Sans">fee revenue</text>
+
+        <!-- flows -->
+        <path d="M200,140 L360,110" stroke="#3B4863" stroke-width="2" marker-end="url(#af)"/>
+        <text x="270" y="105" font-size="13" fill="#14213D" font-family="IBM Plex Sans" font-weight="600">$26 premium into pool</text>
+        <path d="M200,180 L360,180 L360,330 L720,330 L730,190" fill="none" stroke="#3B4863" stroke-width="2" marker-end="url(#af)" opacity="0"/>
+        <path d="M200,185 C 300,320 700,320 805,200" fill="none" stroke="#3B4863" stroke-width="2" marker-end="url(#af)"/>
+        <text x="500" y="318" font-size="13" fill="#14213D" text-anchor="middle" font-family="IBM Plex Sans" font-weight="600">$3 fee to TOSBI</text>
+        <path d="M360,230 L200,230" stroke="#1F7A5C" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#af)"/>
+        <text x="280" y="250" font-size="13" fill="#1F7A5C" text-anchor="middle" font-family="IBM Plex Sans">payout, only if the market falls</text>
+      </svg>
+      <figcaption>Premiums enter the pool and increase its capacity. Payouts leave it. Our fee never touches the pool.</figcaption>
+    </figure>
+    <div class="box amber">
+      <strong>Why full backing, and not a fraction of it.</strong> A real insurer holds a fraction of its liabilities because claims are uncorrelated. Crypto crashes are the opposite: every protected long claims on the same day. A pool holding 40% of its promises goes bankrupt in exactly the event it was sold for. Full backing costs capital efficiency and buys a guarantee we can put in a contract.
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>How we make money</h2>
+  <div>
+    <table>
+      <tr><th>Revenue line</th><th>Who pays</th><th>How much</th><th>When</th></tr>
+      <tr><td>Protection fee</td><td>Trader, on every policy</td><td>0.30% of protected amount (min $0.50)</td><td>Day one</td></tr>
+      <tr><td>Integration and support</td><td>PerpDEX</td><td>Negotiated; waived for launch partners</td><td>Day one</td></tr>
+      <tr><td>Capital management fee</td><td>Outside capital providers in tranched vaults</td><td>Percentage of yield</td><td>v2</td></tr>
+      <tr><td>Multi-chain licensing</td><td>PerpDEXs on other chains</td><td>Fee share or flat licence</td><td>Phase 2</td></tr>
+    </table>
+    <h3>What the fee looks like at scale</h3>
+    <p>The fee is charged on protected notional, so revenue tracks how much position value traders choose to protect, not how the market moves.</p>
+    <table>
+      <tr><th>Protected notional per day</th><th class="num">TOSBI fee per day</th><th class="num">Per year</th></tr>
+      <tr><td>$1 million (a small DEX, low adoption)</td><td class="num">$3,000</td><td class="num">$1.1M</td></tr>
+      <tr><td>$10 million</td><td class="num">$30,000</td><td class="num">$11M</td></tr>
+      <tr><td>$50 million (one mid-size DEX at Bybit-level adoption)</td><td class="num">$150,000</td><td class="num">$55M</td></tr>
+    </table>
+    <p class="note">Bybit does not publish Perp Protect volumes. These rows are illustrative capacity, not forecasts. The PerpDEX's return is separate: it keeps the premium spread on its own capital.</p>
+    <h3>Unit economics of one policy</h3>
+    <table>
+      <tr><td>Fair price of the protection (from volatility model)</td><td class="num">$20.87</td></tr>
+      <tr><td>Utilization and concentration loadings, safety margin</td><td class="num">+$4.77</td></tr>
+      <tr><td>Premium, into the PerpDEX's pool</td><td class="num">$25.64</td></tr>
+      <tr><td>Protection fee, to TOSBI</td><td class="num">$3.00</td></tr>
+      <tr class="total"><td>Trader pays</td><td class="num">$28.64</td></tr>
+    </table>
+    <p>On this policy the pool expects to pay out about $20.87 on average and keeps about $4.77 as return on the $250 it reserved for a day. Across many policies that is the PerpDEX's yield. Our $3 is earned whether or not the market moves.</p>
+  </div>
+</section>
+
+<section>
+  <h2>How we protect the pool</h2>
+  <div>
+    <p>Full backing makes insolvency impossible. These limits decide how much of the pool any single event can consume, and they are enforced by the contract, not by policy.</p>
+    <figure>
+      <svg viewBox="0 0 900 230" role="img" aria-label="Pool capacity and limits">
+        <g font-family="IBM Plex Sans" font-size="13">
+          <!-- full bar -->
+          <rect x="40" y="70" width="820" height="60" fill="#fff" stroke="#14213D" stroke-width="2"/>
+          <!-- XLM long 25% -->
+          <rect x="40" y="70" width="205" height="60" fill="#1F7A5C"/>
+          <text x="142" y="105" text-anchor="middle" fill="#fff" font-weight="600">XLM long, capped at 25%</text>
+          <!-- XLM short -->
+          <rect x="245" y="70" width="82" height="60" fill="#5FA88C"/>
+          <text x="286" y="105" text-anchor="middle" fill="#fff">XLM short</text>
+          <!-- BTC -->
+          <rect x="327" y="70" width="164" height="60" fill="#8FC2AD"/>
+          <text x="409" y="105" text-anchor="middle" fill="#14213D">BTC, ETH, others</text>
+          <!-- free -->
+          <text x="632" y="105" text-anchor="middle" fill="#3B4863">Free capital</text>
+          <!-- buffer 10% -->
+          <rect x="778" y="70" width="82" height="60" fill="#F7ECD2"/>
+          <text x="819" y="98" text-anchor="middle" fill="#B0802A" font-weight="600">10%</text>
+          <text x="819" y="116" text-anchor="middle" fill="#B0802A">buffer</text>
+          <!-- brackets -->
+          <line x1="40" y1="150" x2="245" y2="150" stroke="#14213D"/>
+          <text x="142" y="172" text-anchor="middle" fill="#14213D">Any single asset and direction: at most 25%</text>
+          <line x1="40" y1="195" x2="327" y2="195" stroke="#14213D"/>
+          <text x="183" y="217" text-anchor="middle" fill="#14213D">Any single asset, both directions: at most 40%</text>
+          <text x="450" y="50" text-anchor="middle" fill="#3B4863">Pool capacity 100%</text>
+        </g>
+      </svg>
+      <figcaption>Worst case by design: a 30% one-day crash with the XLM-long book at its cap costs the pool at most 25% of capital, on policies that all paid a premium.</figcaption>
+    </figure>
+    <table>
+      <tr><th>Threat</th><th>Control</th></tr>
+      <tr><td>One asset crashes and everyone protecting it claims at once</td><td>25% cap per asset-and-direction; 40% per asset</td></tr>
+      <tr><td>A crowd piles into the same protection before a known event</td><td>Premium rises automatically with concentration; surcharge around scheduled events</td></tr>
+      <tr><td>A trader moves the price to trigger a payout</td><td>Settlement on a 20–30 minute multi-source average; policies sized to the cost of moving the market</td></tr>
+      <tr><td>Buy protection, close the position, keep the option</td><td>Protection is bound to the position and settles the moment the position closes</td></tr>
+      <tr><td>One whale drains the pool</td><td>2% of pool per wallet</td></tr>
+      <tr><td>Volatility doubles in an hour</td><td>Short-duration sales pause 15 minutes while prices refresh</td></tr>
+    </table>
+    <p>The single number we manage to is the loss ratio: payouts divided by premiums. Target below 80% on a rolling month. Above 100% for two weeks raises prices; well below 40% for two months lowers them.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Where we sit in the market</h2>
+  <div class="wide">
+    <figure>
+      <svg viewBox="0 0 900 420" role="img" aria-label="Competitive map: distribution vs product shape">
+        <g font-family="IBM Plex Sans" font-size="13" fill="#14213D">
+          <!-- axes -->
+          <line x1="90" y1="360" x2="860" y2="360" stroke="#6E7A8F" stroke-width="1.2"/>
+          <line x1="90" y1="360" x2="90" y2="40" stroke="#6E7A8F" stroke-width="1.2"/>
+          <text x="475" y="395" text-anchor="middle" fill="#6E7A8F">Where the trader buys it</text>
+          <text x="140" y="380" text-anchor="middle" fill="#6E7A8F">separate venue</text>
+          <text x="810" y="380" text-anchor="middle" fill="#6E7A8F">inside the position</text>
+          <text x="40" y="200" text-anchor="middle" fill="#6E7A8F" transform="rotate(-90 40 200)">Who holds the capital</text>
+          <text x="75" y="350" text-anchor="end" fill="#6E7A8F">venue</text>
+          <text x="75" y="55" text-anchor="end" fill="#6E7A8F">partner / pool</text>
+
+          <!-- CEX options -->
+          <circle cx="160" cy="300" r="14" fill="#C9D0D8"/>
+          <text x="160" y="330" text-anchor="middle">Deribit, Binance, OKX options</text>
+          <!-- Bybit -->
+          <circle cx="760" cy="300" r="14" fill="#C9D0D8"/>
+          <text x="760" y="330" text-anchor="middle">Bybit Perp Protect</text>
+          <!-- Nami -->
+          <circle cx="620" cy="270" r="14" fill="#C9D0D8"/>
+          <text x="620" y="245" text-anchor="middle">Nami Insurance</text>
+          <!-- Options DEXs -->
+          <circle cx="220" cy="130" r="14" fill="#C9D0D8"/>
+          <text x="220" y="160" text-anchor="middle">Derive, Kyan, Panoptic, Hegic</text>
+          <!-- Bumper -->
+          <circle cx="330" cy="90" r="14" fill="#C9D0D8"/>
+          <text x="330" y="70" text-anchor="middle">Bumper</text>
+          <!-- TOSBI -->
+          <circle cx="780" cy="90" r="22" fill="#1F7A5C"/>
+          <text x="780" y="95" text-anchor="middle" fill="#fff" font-weight="600">TOSBI</text>
+          <text x="780" y="135" text-anchor="middle" font-weight="600" fill="#1F7A5C">on-chain, position-attached,</text>
+          <text x="780" y="153" text-anchor="middle" font-weight="600" fill="#1F7A5C">partner capital</text>
+        </g>
+      </svg>
+      <figcaption>The top-right quadrant is empty. Everything that sits inside the position today is a centralized exchange underwriting from its own balance sheet; everything on-chain asks the trader to leave the position and learn options.</figcaption>
+    </figure>
+    <table>
+      <tr><th></th><th>Bybit Perp Protect</th><th>Nami Insurance</th><th>Bumper / Panoptic</th><th>Options DEXs</th><th>TOSBI</th></tr>
+      <tr><td>Attached to the position</td><td>Yes</td><td>Yes</td><td>No</td><td>No</td><td>Yes</td></tr>
+      <tr><td>Payout matches the loss</td><td>Yes</td><td>No, fixed amount</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Cost known upfront</td><td>Yes</td><td>Yes</td><td>No, accrues</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>On-chain</td><td>No</td><td>No</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+      <tr><td>Who bears the risk</td><td>Bybit</td><td>Nami</td><td>LP pool</td><td>Market makers</td><td>PerpDEX pool</td></tr>
+      <tr><td>Available on Stellar</td><td>No</td><td>No</td><td>No</td><td>No</td><td>Yes</td></tr>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Go-to-market</h2>
+  <div>
+    <p>We are starting on Stellar on purpose. It has five-second finality, negligible fees, native USDC, a production oracle, and a first wave of perpetual DEXs that are early enough to co-design with. There is no options venue on the chain for a DEX to route to instead of us.</p>
+    <ol class="timeline">
+      <li class="now"><b>Phase 1: Stellar, one launch partner</b>Integrate with one perp DEX at testnet, then mainnet. Prove the loss ratio over a full volatility cycle. Fund the build through the Stellar Community Fund, which has already backed oracle, perp, options, and insurance projects on the chain.</li>
+      <li><b>Phase 1b: every Stellar perp DEX</b>The integration is a position-data interface and a button. Once one DEX runs it, the next takes weeks.</li>
+      <li><b>Phase 2: tranched capital</b>Let outside capital supply a senior layer above the PerpDEX's first-loss slice. This is how the pool grows past one venue's balance sheet, and where our capital-management fee begins.</li>
+      <li><b>Phase 3: other chains</b>The contracts are chain-specific; the pricing engine, risk controls, and partner playbook are not. Target the chains where perp DEXs are largest and no protection layer exists.</li>
+    </ol>
+    <div class="box">
+      <strong>What a launch partner commits.</strong> An initial capital deposit sized to about two weeks of expected demand, on-chain position data including close prices, a "Protect" button in the position view, and a joint process for changing risk parameters.
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>What could go wrong</h2>
+  <div>
+    <table>
+      <tr><th>Risk</th><th>What we do about it</th></tr>
+      <tr><td>Pricing is wrong and the pool loses money</td><td>The loss ratio is measured weekly and prices move on a rule, not a meeting. Full backing means a mispriced month is a bad month, not a failure.</td></tr>
+      <tr><td>Stellar perp DEXs stay small</td><td>The integration cost is low enough to run on every one of them; the pricing engine is chain-agnostic and Phase 3 does not depend on Stellar volume.</td></tr>
+      <tr><td>The oracle fails or is attacked</td><td>Multi-source averaging, staleness checks, per-update caps, and a pause. Settlement waits for a valid price rather than using a bad one.</td></tr>
+      <tr><td>A DEX builds its own</td><td>They would need the pricing, the risk controls, and the capital rules, and they would carry the underwriting on a single venue's book. Our fee is small relative to that build and that risk.</td></tr>
+      <tr><td>Capital is inefficient at 100% backing</td><td>True, and accepted for v1. Tranching in v2 brings in cheaper capital; hedging is deferred until a deep on-chain perp venue exists to hedge on.</td></tr>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>The ask</h2>
+  <div>
+    <p>We are looking for one launch PerpDEX partner on Stellar, and for capital to fund a twelve-month build and audit cycle. A partner gets a new product, premium income on capital it already holds, and a say in the risk parameters. TOSBI keeps the fee and the infrastructure.</p>
+    <p>The full technical specification, pricing formulas, contract interfaces, and academic references are in the companion build document.</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  TOSBI · Draft business model · Figures in examples use XLM at $0.20 with 100% annualized volatility and are illustrative.
+</footer>
+
+</body>
+</html>

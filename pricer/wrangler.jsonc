@@ -1,0 +1,15 @@
+{
+  "name": "tosbi-demo",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": "./public" },
+  // Filled from scripts/deploy.sh output. PRICER_SECRET and FAUCET_SECRET are set with `wrangler secret put`.
+  "vars": {
+    "RPC_URL": "https://soroban-testnet.stellar.org",
+    "NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
+    "VAULT_ID": "CAZXBVORB2QN7V2FHYJFALYDRLBWZGUQDW2GSF3IKGYWFMEVVMZDS4PG",
+    "ASSET_CODE": "tUSDC",
+    "ASSET_ISSUER": "GCYYOX6T6DSACBQRPFR57HPLCUSRHSBD5QSQ3PWUCEOQ5OVKXPGBATME"
+  }
+}

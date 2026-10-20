@@ -1,0 +1,59 @@
+{
+  "asset": "XLM",
+  "source": "Binance XLMUSDT closes: 30d of 5m for buckets <= 12h, 90d of 1h for >= 1d",
+  "generated_at": "2026-10-10T16:00:33.865Z",
+  "r_ref": 0.25,
+  "floor": 0.6,
+  "cap": 3,
+  "buckets": {
+    "900": {
+      "down": 0.708,
+      "up": 0.7318,
+      "raw_down": 0.708,
+      "raw_up": 0.7318,
+      "samples": 8637
+    },
+    "3600": {
+      "down": 0.6937,
+      "up": 0.741,
+      "raw_down": 0.6937,
+      "raw_up": 0.741,
+      "samples": 8628
+    },
+    "14400": {
+      "down": 0.6879,
+      "up": 0.7754,
+      "raw_down": 0.6879,
+      "raw_up": 0.7754,
+      "samples": 8592
+    },
+    "43200": {
+      "down": 0.685,
+      "up": 0.8417,
+      "raw_down": 0.685,
+      "raw_up": 0.8417,
+      "samples": 8496
+    },
+    "86400": {
+      "down": 0.6,
+      "up": 0.6608,
+      "raw_down": 0.5993,
+      "raw_up": 0.6608,
+      "samples": 2136
+    },
+    "259200": {
+      "down": 0.6,
+      "up": 0.6244,
+      "raw_down": 0.5281,
+      "raw_up": 0.6244,
+      "samples": 2088
+    },
+    "604800": {
+      "down": 0.6,
+      "up": 0.752,
+      "raw_down": 0.5167,
+      "raw_up": 0.752,
+      "samples": 1992
+    }
+  }
+}

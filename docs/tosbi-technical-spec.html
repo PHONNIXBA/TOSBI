@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TOSBI — Technical specification, Architecture 1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F2F4F6; --ink:#14213D; --ink-2:#3B4863; --mute:#6E7A8F;
+    --rule:#C9D0D8; --green:#1F7A5C; --green-soft:#DDEDE6;
+    --amber:#D9A441; --amber-soft:#F7ECD2; --red:#B4483E; --white:#FFFFFF;
+    --serif:"Fraunces", "Bitstream Charter", Georgia, serif;
+    --sans:"IBM Plex Sans", "Carlito", "Helvetica Neue", Arial, sans-serif;
+    --mono:"IBM Plex Mono", "DejaVu Sans Mono", Menlo, monospace;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.55}
+  body{margin:0}
+  .wrap{max-width:1160px;margin:0 auto;padding:0 32px}
+
+  header{padding:56px 0 32px;border-bottom:1px solid var(--rule)}
+  .brand{font-family:var(--serif);font-weight:600;font-size:20px}
+  .brand span{color:var(--mute);font-family:var(--sans);font-weight:400;font-size:15px;margin-left:12px}
+  h1{font-family:var(--serif);font-weight:400;font-size:clamp(34px,4.5vw,54px);line-height:1.06;letter-spacing:-.015em;margin:28px 0 16px;max-width:22ch}
+  .meta{display:flex;flex-wrap:wrap;gap:24px;font-size:14px;color:var(--mute)}
+  .meta b{color:var(--ink);font-weight:500}
+
+  nav.contents{padding:24px 0;border-bottom:1px solid var(--rule)}
+  nav.contents ol{margin:0;padding-left:20px;columns:3;column-gap:32px;font-size:14px}
+  nav.contents li{margin:3px 0}
+  nav.contents a{color:var(--ink);text-decoration:none}
+  nav.contents a:hover{text-decoration:underline}
+
+  section{display:grid;grid-template-columns:200px 1fr;gap:40px;padding:48px 0;border-bottom:1px solid var(--rule)}
+  section > h2{grid-column:1;font-family:var(--serif);font-weight:400;font-size:24px;line-height:1.2;margin:0;position:sticky;top:24px;align-self:start}
+  section > h2 small{display:block;font-family:var(--mono);font-size:12px;color:var(--mute);margin-bottom:6px}
+  section > div{grid-column:2;max-width:78ch}
+  section > div.wide{max-width:none}
+  h3{font-weight:600;font-size:16px;margin:28px 0 8px}
+  h4{font-weight:600;font-size:14.5px;margin:20px 0 6px;color:var(--ink-2)}
+  p{margin:0 0 14px}
+  .note{color:var(--mute);font-size:14px}
+  ul{margin:0 0 14px;padding-left:20px}
+  li{margin:3px 0}
+
+  pre{font-family:var(--mono);font-size:13.5px;line-height:1.5;background:var(--white);border:1px solid var(--rule);border-left:3px solid var(--ink);padding:14px 16px;margin:14px 0;overflow-x:auto;white-space:pre}
+  pre.math{border-left-color:var(--green);background:#FBFCFC}
+  code{font-family:var(--mono);font-size:.92em;background:#E8ECF0;padding:1px 5px;border-radius:2px}
+  pre code{background:none;padding:0}
+
+  figure{margin:20px 0;background:var(--white);border:1px solid var(--rule);padding:18px}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{font-size:13.5px;color:var(--mute);margin-top:10px;max-width:78ch}
+
+  table{width:100%;border-collapse:collapse;font-size:14.5px;margin:16px 0}
+  th{text-align:left;font-weight:600;padding:9px 11px;border-bottom:2px solid var(--ink);vertical-align:bottom}
+  td{padding:8px 11px;border-bottom:1px solid var(--rule);vertical-align:top}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  td code,th code{white-space:nowrap}
+  tr.total td{font-weight:600;border-top:2px solid var(--ink);border-bottom:none}
+
+  .box{border-left:4px solid var(--green);background:var(--green-soft);padding:14px 18px;margin:18px 0}
+  .box.amber{border-color:var(--amber);background:var(--amber-soft)}
+  .box.red{border-color:var(--red);background:#F5E3E1}
+
+  ol.timeline{list-style:none;padding:0;margin:16px 0;border-left:2px solid var(--rule)}
+  ol.timeline li{padding:0 0 18px 20px;position:relative}
+  ol.timeline li::before{content:"";position:absolute;left:-7px;top:6px;width:12px;height:12px;border-radius:50%;background:var(--paper);border:2px solid var(--ink)}
+  ol.timeline b{display:block;font-weight:600}
+
+  footer{padding:36px 0 60px;color:var(--mute);font-size:14px}
+
+  @media (max-width:860px){
+    section{grid-template-columns:1fr;gap:12px}
+    section > h2{position:static}
+    nav.contents ol{columns:1}
+  }
+  @media print{
+    html{background:#fff;font-size:11.5px}
+    section{display:block;padding:18px 0}
+    section > h2{position:static;font-size:20px;margin-bottom:10px;border-bottom:2px solid var(--ink);padding-bottom:4px;width:fit-content;break-after:avoid}
+    section > div{max-width:none}
+    figure,table,pre,.box{break-inside:avoid}
+    nav.contents{display:none}
+    figure{max-width:150mm}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="brand">TOSBI <span>Technical specification</span></div>
+    <h1>Architecture 1: reserve-pool put spread, fixed duration buckets, full backing.</h1>
+    <div class="meta">
+      <span><b>Version</b> 0.1 draft</span>
+      <span><b>Chain</b> Stellar / Soroban</span>
+      <span><b>Settlement asset</b> USDC</span>
+      <span><b>Audience</b> engineering, risk, integration partners</span>
+    </div>
+  </div>
+</header>
+
+<nav class="contents wrap">
+  <ol>
+    <li><a href="#scope">Scope</a></li>
+    <li><a href="#notation">Notation</a></li>
+    <li><a href="#terms">Product terms</a></li>
+    <li><a href="#pricing">Pricing</a></li>
+    <li><a href="#capital">Capital rules</a></li>
+    <li><a href="#settlement">Settlement</a></li>
+    <li><a href="#abuse">Anti-abuse rules</a></li>
+    <li><a href="#contracts">Soroban contract architecture</a></li>
+    <li><a href="#offchain">Off-chain services</a></li>
+    <li><a href="#params">Initial risk parameters</a></li>
+    <li><a href="#example">Worked example</a></li>
+    <li><a href="#monitoring">Monitoring</a></li>
+    <li><a href="#testing">Test and validation plan</a></li>
+    <li><a href="#roadmap">Roadmap after v0.1</a></li>
+    <li><a href="#refs">References</a></li>
+  </ol>
+</nav>
+
+<main class="wrap">
+
+<section id="scope">
+  <h2><small>§0</small>Scope</h2>
+  <div>
+    <p>This document specifies the MVP protection product: a loss-linked, capped protection contract attached to a PerpDEX position, priced off-chain from a volatility table, reserved and settled on-chain, and fully backed by PerpDEX-supplied Protection Capital.</p>
+    <p>It covers product terms, pricing formulas, capital rules, settlement rules, anti-abuse rules, Soroban contract architecture, off-chain services, initial risk parameters, a worked example, monitoring, a test plan, and references.</p>
+    <p class="note">Out of scope for v0.1: streaming/perpetual protection (Architecture 3), tranched vaults (Architecture 4), delta-hedging (Architecture 5).</p>
+    <figure>
+      <svg viewBox="0 0 900 250" role="img" aria-label="System overview">
+        <defs><marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#3B4863"/></marker></defs>
+        <g font-family="IBM Plex Sans, Carlito, sans-serif" font-size="13">
+          <!-- off-chain -->
+          <rect x="30" y="30" width="260" height="190" fill="#F2F4F6" stroke="#C9D0D8" stroke-dasharray="4 3"/>
+          <text x="160" y="52" text-anchor="middle" fill="#6E7A8F" font-weight="600">Off-chain (TOSBI)</text>
+          <rect x="50" y="70" width="220" height="34" fill="#fff" stroke="#14213D"/><text x="160" y="92" text-anchor="middle">Pricer + vol calibrator</text>
+          <rect x="50" y="114" width="220" height="34" fill="#fff" stroke="#14213D"/><text x="160" y="136" text-anchor="middle">Keeper (settle, TTL)</text>
+          <rect x="50" y="158" width="220" height="34" fill="#fff" stroke="#14213D"/><text x="160" y="180" text-anchor="middle">Risk monitor</text>
+          <!-- on-chain -->
+          <rect x="330" y="30" width="360" height="190" fill="#DDEDE6" stroke="#1F7A5C"/>
+          <text x="510" y="52" text-anchor="middle" fill="#1F7A5C" font-weight="600">On-chain (Soroban)</text>
+          <rect x="350" y="70" width="150" height="34" fill="#fff" stroke="#14213D"/><text x="425" y="92" text-anchor="middle">tosbi-book</text>
+          <rect x="520" y="70" width="150" height="34" fill="#fff" stroke="#14213D"/><text x="595" y="92" text-anchor="middle">tosbi-vault</text>
+          <rect x="350" y="114" width="150" height="34" fill="#fff" stroke="#14213D"/><text x="425" y="136" text-anchor="middle">quote-verifier</text>
+          <rect x="520" y="114" width="150" height="34" fill="#fff" stroke="#14213D"/><text x="595" y="136" text-anchor="middle">oracle-adapter</text>
+          <rect x="350" y="158" width="150" height="34" fill="#fff" stroke="#14213D"/><text x="425" y="180" text-anchor="middle">perpdex-adapter</text>
+          <rect x="520" y="158" width="150" height="34" fill="#fff" stroke="#14213D"/><text x="595" y="180" text-anchor="middle">registry / admin</text>
+          <!-- externals -->
+          <rect x="730" y="70" width="140" height="34" fill="#fff" stroke="#14213D"/><text x="800" y="92" text-anchor="middle">PerpDEX positions</text>
+          <rect x="730" y="114" width="140" height="34" fill="#fff" stroke="#14213D"/><text x="800" y="136" text-anchor="middle">Reflector (SEP-40)</text>
+          <rect x="730" y="158" width="140" height="34" fill="#fff" stroke="#14213D"/><text x="800" y="180" text-anchor="middle">USDC (SAC)</text>
+          <path d="M290,87 L350,87" stroke="#3B4863" stroke-width="1.5" marker-end="url(#k)"/>
+          <path d="M290,131 L350,131" stroke="#3B4863" stroke-width="1.5" marker-end="url(#k)"/>
+          <path d="M670,175 L730,175" stroke="#3B4863" stroke-width="1.5" marker-end="url(#k)"/>
+          <path d="M670,131 L730,131" stroke="#3B4863" stroke-width="1.5" marker-end="url(#k)"/>
+          <path d="M670,87 L730,87" stroke="#3B4863" stroke-width="1.5" marker-end="url(#k)"/>
+        </g>
+      </svg>
+      <figcaption>Pricing happens off-chain and is signed; money, reservations, caps and settlement are enforced on-chain. Externals are the PerpDEX's position contract, the oracle, and the USDC token.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="notation">
+  <h2><small>§1</small>Notation</h2>
+  <div class="wide">
+    <table>
+      <tr><th>Symbol</th><th>Meaning</th><th>Unit</th></tr>
+      <tr><td><code>A</code></td><td>Protected Amount, chosen by trader</td><td>USDC</td></tr>
+      <tr><td><code>P_start</code></td><td>Protection Start price (position mark at quote time)</td><td>USDC per unit</td></tr>
+      <tr><td><code>Q = A / P_start</code></td><td>Protected quantity</td><td>asset units</td></tr>
+      <tr><td><code>R</code></td><td>Coverage Range, chosen by trader</td><td>fraction (e.g. 0.25)</td></tr>
+      <tr><td><code>P_end</code></td><td>Coverage End price</td><td>USDC per unit</td></tr>
+      <tr><td><code>D</code></td><td>Duration</td><td>seconds</td></tr>
+      <tr><td><code>τ = D / 31,557,600</code></td><td>Duration in years (365.25-day year)</td><td>years</td></tr>
+      <tr><td><code>σ_dir(asset, τ)</code></td><td>Effective volatility from the vol table, per direction: <code>σ_down</code> prices LONG protection, <code>σ_up</code> prices SHORT protection</td><td>annualized fraction</td></tr>
+      <tr><td><code>MaxPayout</code></td><td>Maximum payout, equals reserved capital</td><td>USDC</td></tr>
+      <tr><td><code>Π_fair</code>, <code>Π</code></td><td>Fair (unloaded) premium; charged premium</td><td>USDC</td></tr>
+      <tr><td><code>F</code></td><td>Protection Fee (TOSBI revenue)</td><td>USDC</td></tr>
+      <tr><td><code>K</code></td><td>Protection Capital in vault</td><td>USDC</td></tr>
+      <tr><td><code>U</code></td><td>Utilization = Σ active MaxPayout / K</td><td>fraction</td></tr>
+      <tr><td><code>C_{a,d}</code></td><td>Concentration share of (asset a, direction d) = Σ MaxPayout(a,d) / K</td><td>fraction</td></tr>
+      <tr><td><code>P_settle</code></td><td>Settlement price</td><td>USDC per unit</td></tr>
+      <tr><td><code>W(D)</code></td><td>Settlement TWAP window</td><td>seconds</td></tr>
+      <tr><td><code>N(·)</code></td><td>Standard normal CDF</td><td></td></tr>
+    </table>
+    <p class="note">Direction <code>d ∈ {LONG, SHORT}</code> and asset <code>a</code> are read from the PerpDEX Position Contract, never entered by the trader.</p>
+  </div>
+</section>
+
+<section id="terms">
+  <h2><small>§2</small>Product terms</h2>
+  <div>
+    <h3>2.1 Trader chooses</h3>
+    <ul>
+      <li><code>A</code> Protected Amount, <code>A_min ≤ A ≤ min(A_max, position notional)</code></li>
+      <li><code>D</code> Duration from the bucket menu <code>{15m, 1h, 4h, 12h, 1d, 3d, 7d}</code>. Off-menu durations permitted in v0.2 via interpolation (§3.4); v0.1 restricts to the menu.</li>
+      <li><code>R</code> Coverage Range, <code>R_min ≤ R ≤ R_max</code> (initial 0.05–0.50)</li>
+    </ul>
+    <h3>2.2 TOSBI determines</h3>
+<pre class="math">P_start   = mark price from Position Contract at quote time
+P_end     = P_start × (1 − R)          if LONG
+          = P_start × (1 + R)          if SHORT
+MaxPayout = Q × |P_start − P_end| = A × R
+Premium   = Π        (§3)
+Fee       = F        (§3.7)
+Reserved  = MaxPayout</pre>
+    <h3>2.3 Payout at settlement</h3>
+<pre class="math">LONG:   Payout = min( Q × max(0, P_start − P_settle),  MaxPayout )
+SHORT:  Payout = min( Q × max(0, P_settle − P_start),  MaxPayout )
+
+equivalently  Payout = A × min( R, max(0, loss_fraction) )
+              LONG:   loss_fraction = (P_start − P_settle) / P_start
+              SHORT:  loss_fraction = (P_settle − P_start) / P_start</pre>
+    <p>This is a bull put spread (LONG protection) or bear call spread (SHORT protection), held long by the trader.</p>
+    <figure>
+      <svg viewBox="0 0 900 300" role="img" aria-label="Payout profile long and short">
+        <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6E7A8F"/></marker></defs>
+        <g font-family="IBM Plex Sans, Carlito, sans-serif" font-size="13" fill="#14213D">
+          <!-- LONG -->
+          <text x="230" y="30" text-anchor="middle" font-weight="600">LONG protection (put spread)</text>
+          <line x1="60" y1="240" x2="420" y2="240" stroke="#6E7A8F" marker-end="url(#ah)"/>
+          <line x1="60" y1="240" x2="60" y2="50" stroke="#6E7A8F" marker-end="url(#ah)"/>
+          <rect x="120" y="50" width="150" height="190" fill="#DDEDE6"/>
+          <polyline points="60,90 120,90 270,240 420,240" fill="none" stroke="#14213D" stroke-width="3"/>
+          <text x="270" y="262" text-anchor="middle">P_start</text>
+          <text x="120" y="262" text-anchor="middle">P_end</text>
+          <text x="66" y="80" fill="#B0802A" font-weight="600">MaxPayout = A·R</text>
+          <text x="400" y="262" text-anchor="end" fill="#6E7A8F">price</text>
+          <!-- SHORT -->
+          <text x="680" y="30" text-anchor="middle" font-weight="600">SHORT protection (call spread)</text>
+          <line x1="500" y1="240" x2="870" y2="240" stroke="#6E7A8F" marker-end="url(#ah)"/>
+          <line x1="500" y1="240" x2="500" y2="50" stroke="#6E7A8F" marker-end="url(#ah)"/>
+          <rect x="650" y="50" width="150" height="190" fill="#DDEDE6"/>
+          <polyline points="500,240 650,240 800,90 870,90" fill="none" stroke="#14213D" stroke-width="3"/>
+          <text x="650" y="262" text-anchor="middle">P_start</text>
+          <text x="800" y="262" text-anchor="middle">P_end</text>
+          <text x="860" y="80" text-anchor="end" fill="#B0802A" font-weight="600">MaxPayout = A·R</text>
+        </g>
+      </svg>
+      <figcaption>Payout is linear inside the coverage range and capped outside it. The reserved capital equals the cap.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="pricing">
+  <h2><small>§3</small>Pricing</h2>
+  <div>
+    <h3>3.1 Black–Scholes building blocks</h3>
+    <p>With risk-free rate <code>r</code> (set <code>r = 0</code> for MVP; USDC carry is negligible at these tenors) and <code>S = P_start</code>:</p>
+<pre class="math">d1(K) = [ ln(S/K) + (r + σ²/2) τ ] / (σ √τ)
+d2(K) = d1(K) − σ √τ
+
+Put(K)  = K e^(−rτ) N(−d2) − S N(−d1)
+Call(K) = S N(d1) − K e^(−rτ) N(d2)</pre>
+    <p class="note">Reference: Black &amp; Scholes (1973); Hull, <em>Options, Futures and Other Derivatives</em>, ch. 15.</p>
+
+    <h3>3.2 Fair premium (per contract)</h3>
+<pre class="math">LONG:   Π_fair = Q × [ Put(P_start)  − Put(P_end)  ]      σ = σ_down(asset, τ)
+SHORT:  Π_fair = Q × [ Call(P_start) − Call(P_end) ]      σ = σ_up(asset, τ)
+
+sanity check (ATM, r = 0):   Put_ATM = Call_ATM ≈ 0.3989 × S × σ√τ</pre>
+    <p>The two directions use different volatilities because crypto returns are asymmetric: falls are sharper and fatter-tailed than rises. With a single σ an ATM put spread and an ATM call spread price identically under Black–Scholes (r = 0), which would misprice one side.</p>
+    <p><code>Put(P_start)</code> dominates because it is at-the-money at purchase; <code>Put(P_end)</code> is small for short tenors but must be computed — it matters for 3–7 day covers and small <code>R</code>.</p>
+
+    <h3>3.3 Volatility table</h3>
+    <p><code>σ_dir(asset, τ_bucket)</code> is maintained off-chain, one value per (asset, bucket, direction): a <code>σ_down</code> calibrated on falls and a <code>σ_up</code> calibrated on rises.</p>
+    <div class="box red"><strong>Do not derive short-bucket σ by scaling annualized vol with √τ.</strong> Short-horizon crypto returns are fat-tailed; a √τ-scaled diffusion under-prices 15-minute to 4-hour covers (Matic, Packham &amp; Härdle 2023; Du 2025).</div>
+    <p>Calibrate each bucket empirically. For bucket <code>τ_b</code>, collect rolling <code>τ_b</code>-horizon log returns over trailing window <code>H_b</code> (initial: 30 days for ≤ 12h buckets, 90 days for ≥ 1d). The <strong>quantile-matched σ</strong> is the σ at which the Black–Scholes spread price equals the empirical expected payoff:</p>
+<pre class="math">down_τ = (P_0 − P_τ) / P_0 = 1 − exp(ret_τ)        loss fraction for a LONG over horizon τ_b
+up_τ   = (P_τ − P_0) / P_0 = exp(ret_τ) − 1        loss fraction for a SHORT over horizon τ_b
+
+σ_down,b = argmin_σ | [Put_BS(S,σ,τ_b)  − Put_BS(S(1−R_ref),σ,τ_b) ] / S  −  E_emp[ max(0, min(R_ref, down_τ)) ] |
+σ_up,b   = argmin_σ | [Call_BS(S,σ,τ_b) − Call_BS(S(1+R_ref),σ,τ_b)] / S  −  E_emp[ max(0, min(R_ref, up_τ)) ] |
+
+both sides as a fraction of A.   R_ref = 0.25 (or solve at 2–3 reference ranges and take the max)
+floor:  σ_dir,b ≥ σ_floor(asset)     initial XLM 60%, BTC/ETH 50%, same floor both directions
+cap:    σ_dir,b ≤ 300%
+expect σ_down > σ_up for most assets in most regimes; do not force them equal</pre>
+    <p>This absorbs jump risk into σ without a separate jump model. Refresh every 4 hours for buckets ≤ 12h, daily for ≥ 1d; re-price immediately on a vol-shock trigger (realized 1h vol &gt; 2× table σ_1h).</p>
+    <h4>v1.1 upgrade: SVI surface</h4>
+<pre class="math">k = ln(K/S)
+w(k) = a + b [ ρ (k − m) + sqrt( (k − m)² + s² ) ],     σ²τ = w(k)</pre>
+    <p>Subject to Gatheral–Jacquier no-arbitrage constraints; calibrated to Deribit/Bybit BTC/ETH surfaces and to empirical skew for XLM. Gives correct <code>Put(P_end)</code> at large <code>R</code>.</p>
+
+    <h3>3.4 Off-bucket durations (v0.2)</h3>
+    <p>Interpolate in total variance, not in σ:</p>
+<pre class="math">w_dir,b = σ_dir,b² τ_b          (interpolate each direction separately)
+w(τ)  = w_lo + (w_hi − w_lo) × (τ − τ_lo) / (τ_hi − τ_lo)      τ_lo ≤ τ ≤ τ_hi
+σ(τ)  = sqrt( w(τ) / τ )
+
+require w(τ) non-decreasing in τ (calendar no-arbitrage); if violated, bump w_hi</pre>
+    <p class="note">Long-term path: map <code>D → q</code> and price with the Amortizing Perpetual Option closed form (Feinstein 2025), which prices all durations from one formula. Note the provisional US patent on AmPOs before adopting.</p>
+
+    <h3>3.5 Risk loadings</h3>
+<pre class="math">Π = Π_fair × M_u × M_c × (1 + ρ)
+
+utilization:     U'  = (Σ active MaxPayout + MaxPayout_new) / K
+                 M_u = 1 + λ_u × U'^p_u            initial λ_u = 0.5, p_u = 2
+
+concentration:   C'  = (Σ MaxPayout(a,d) + MaxPayout_new) / K
+                 M_c = 1 + λ_c × C'^p_c            initial λ_c = 1.0, p_c = 2
+
+risk margin:     ρ = 0.05</pre>
+    <table>
+      <tr><th>U' / C'</th><th class="num">M_u (λ=0.5, p=2)</th><th class="num">M_c (λ=1.0, p=2)</th></tr>
+      <tr><td>0.10</td><td class="num">1.005</td><td class="num">1.010</td></tr>
+      <tr><td>0.25 (concentration cap)</td><td class="num">1.031</td><td class="num">1.063</td></tr>
+      <tr><td>0.40</td><td class="num">1.080</td><td class="num">—</td></tr>
+      <tr><td>0.60</td><td class="num">1.180</td><td class="num">—</td></tr>
+      <tr><td>0.90 (utilization cap)</td><td class="num">1.405</td><td class="num">—</td></tr>
+    </table>
+    <p>The concentration hard cap (§4.2) binds before <code>M_c</code> gets large; that is intentional. Rationale: option market makers charge more as net inventory imbalance grows (Alexander et al. 2021); actuarially these are variance / standard-deviation premium principles (Kaas et al., ch. 5).</p>
+
+    <h3>3.6 Minimum premium</h3>
+<pre class="math">Π = max( Π, Π_min ),      Π_min = max( 0.5 USDC, 0.10% × A )</pre>
+
+    <h3>3.7 Protection Fee</h3>
+<pre class="math">F = max( F_min, f_bps × A ),     initial F_min = 0.5 USDC, f_bps = 30 bp</pre>
+    <p>Fee goes to TOSBI treasury; revenue share with the PerpDEX is a config parameter <code>share_pdx ∈ [0,1]</code>, initial 0.</p>
+
+    <h3>3.8 Total cost to trader</h3>
+<pre class="math">Cost = Π + F
+Π → ProtectionVault (belongs to capital providers)
+F → TOSBI treasury</pre>
+  </div>
+</section>
+
+<section id="capital">
+  <h2><small>§4</small>Capital rules</h2>
+  <div>
+    <h3>4.1 Full backing (invariant, enforced on-chain)</h3>
+<pre class="math">Σ_{active} MaxPayout_i  ≤  K_available
+K_available = vault_balance − pending_payouts − withdrawal_locked</pre>
+    <p>Mint fails if the invariant would be violated.</p>
+
+    <h3>4.2 Hard caps (enforced on-chain)</h3>
+    <table>
+      <tr><th>Cap</th><th>Initial value</th></tr>
+      <tr><td>Per (asset, direction) concentration <code>C_{a,d}</code></td><td>≤ 25% of K</td></tr>
+      <tr><td>Per asset, both directions</td><td>≤ 40% of K</td></tr>
+      <tr><td>Per trader wallet, sum of active MaxPayout</td><td>≤ 2% of K and ≤ 25,000 USDC</td></tr>
+      <tr><td>Per contract <code>A_max</code> / <code>A_min</code></td><td>50,000 / 20 USDC</td></tr>
+      <tr><td>Global utilization <code>U</code></td><td>≤ 90% (last 10% is buffer for oracle/settlement slippage)</td></tr>
+    </table>
+
+    <h3>4.3 Liquidity-relative cap (pricer-enforced, on-chain param)</h3>
+<pre class="math">Σ protected notional(a) ≤ κ × Depth_a       initial κ = 0.5</pre>
+    <p><code>Depth_a</code> = USDC needed to move asset <code>a</code> by <code>R_ref</code> across the venues the oracle reads, estimated daily. A manipulator must spend more than they can extract (Mackinga, Nadahalli &amp; Wattenhofer 2022).</p>
+
+    <h3>4.4 PerpDEX capital withdrawal</h3>
+    <p>Withdrawals are queued: the requested amount becomes <code>withdrawal_locked</code> immediately (blocks new mints against it) and is releasable after <code>T_withdraw</code> (initial 7 days) provided the full-backing invariant still holds.</p>
+
+    <h3>4.5 Premium accrual</h3>
+    <p>Premiums enter the vault immediately and count toward <code>K</code>. Track <code>premium_earned</code> and <code>payout_paid</code> per epoch for loss-ratio monitoring (§11).</p>
+
+    <figure>
+      <svg viewBox="0 0 900 200" role="img" aria-label="Vault accounting">
+        <g font-family="IBM Plex Sans, Carlito, sans-serif" font-size="13">
+          <rect x="40" y="60" width="820" height="56" fill="#fff" stroke="#14213D" stroke-width="2"/>
+          <rect x="40" y="60" width="205" height="56" fill="#1F7A5C"/><text x="142" y="93" text-anchor="middle" fill="#fff" font-weight="600">Σ reserved (a₁, LONG) ≤ 25%</text>
+          <rect x="245" y="60" width="123" height="56" fill="#5FA88C"/><text x="306" y="93" text-anchor="middle" fill="#fff">(a₁, SHORT)</text>
+          <rect x="368" y="60" width="180" height="56" fill="#8FC2AD"/><text x="458" y="93" text-anchor="middle" fill="#14213D">other assets</text>
+          <text x="640" y="93" text-anchor="middle" fill="#3B4863">K_available − Σ reserved</text>
+          <rect x="737" y="60" width="60" height="56" fill="#F7ECD2"/><text x="767" y="93" text-anchor="middle" fill="#B0802A" font-size="12">10% buf</text>
+          <rect x="797" y="60" width="63" height="56" fill="#E8ECF0"/><text x="828" y="86" text-anchor="middle" fill="#3B4863" font-size="11">withdrawal</text><text x="828" y="100" text-anchor="middle" fill="#3B4863" font-size="11">locked</text>
+          <line x1="40" y1="135" x2="368" y2="135" stroke="#14213D"/><text x="204" y="155" text-anchor="middle" fill="#14213D">per asset, both directions ≤ 40%</text>
+          <text x="450" y="40" text-anchor="middle" fill="#3B4863">vault_balance</text>
+        </g>
+      </svg>
+      <figcaption>All caps are computed against <code>K</code>; <code>withdrawal_locked</code> is excluded from <code>K_available</code> the moment a withdrawal is requested.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="settlement">
+  <h2><small>§5</small>Settlement</h2>
+  <div>
+    <h3>5.1 Normal settlement (expiry)</h3>
+<pre class="math">P_settle = TWAP_oracle( asset, window = W(D), ending at T_expire )
+
+W(D) = clamp( 300 s,  0.53 × sqrt(D_minutes) minutes,  1800 s )
+size override:  if MaxPayout > 10,000 USDC then W = 1800 s</pre>
+    <table>
+      <tr><th>Duration</th><th class="num">W(D)</th><th>Duration</th><th class="num">W(D)</th></tr>
+      <tr><td>15m</td><td class="num">5 min (floor)</td><td>12h</td><td class="num">~14 min</td></tr>
+      <tr><td>1h</td><td class="num">5 min (floor)</td><td>1d</td><td class="num">~20 min</td></tr>
+      <tr><td>4h</td><td class="num">~8 min</td><td>3d, 7d</td><td class="num">30 min (cap)</td></tr>
+    </table>
+    <p>Rationale: manipulation cost should scale with contract value. The 30-minute cap matches Bybit Perp Protect and Deribit convention. Settlement may be triggered by anyone at <code>t ≥ T_expire</code>; if the keeper is late by more than one oracle resolution, the contract uses the closest available window and emits <code>LateSettlement</code>.</p>
+
+    <h3>5.2 Early settlement (position closed)</h3>
+<pre class="math">P_ref = lastprice_oracle(asset) at t_close (or nearest record)
+if | P_close − P_ref | / P_ref ≤ δ_close:   P_settle = P_close      δ_close = 1.5%
+else:                                       P_settle = P_ref        (do not trust an outlier close)</pre>
+    <p>Prevents wash-trading a bad close price on a thin book. Partial close: v0.1 settles the whole contract on any close; v0.2 continues on <code>Q' = min(Q, remaining size)</code> with pro-rata <code>MaxPayout</code> and reserve release.</p>
+
+    <h3>5.3 Liquidation of the underlying position</h3>
+    <p>Treated as early settlement with <code>P_close = liquidation price</code> from the Position Contract, subject to the same <code>δ_close</code> check. Protection survives liquidation (matches Bybit).</p>
+
+    <h3>5.4 Oracle safety checks (on-chain)</h3>
+<pre class="math">staleness:      reject if oracle.last_timestamp < now − 2 × oracle.resolution; retry later
+deviation:      if secondary oracle present and |P_primary − P_secondary| / P_secondary > δ_oracle (2%):
+                    P_settle = the value closer to the pre-window 1h TWAP
+per-record cap: ignore any single record deviating > 15% from the prior record  (truncated-oracle pattern)
+stale-max:      if stale > T_stale_max (2h): settle on last valid TWAP, emit DegradedSettlement, admin may pause mints</pre>
+
+    <figure>
+      <svg viewBox="0 0 900 330" role="img" aria-label="Settlement decision flow">
+        <defs><marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#3B4863"/></marker></defs>
+        <g font-family="IBM Plex Sans, Carlito, sans-serif" font-size="13" fill="#14213D">
+          <rect x="30" y="30" width="200" height="44" fill="#fff" stroke="#14213D"/><text x="130" y="57" text-anchor="middle">settle(id) called</text>
+          <path d="M130,74 L130,100" stroke="#3B4863" stroke-width="1.5" marker-end="url(#s)"/>
+          <polygon points="130,100 230,140 130,180 30,140" fill="#F7ECD2" stroke="#D9A441"/><text x="130" y="136" text-anchor="middle">position</text><text x="130" y="152" text-anchor="middle">closed?</text>
+          <path d="M230,140 L330,140" stroke="#3B4863" stroke-width="1.5" marker-end="url(#s)"/><text x="280" y="132" text-anchor="middle" fill="#6E7A8F">yes</text>
+          <path d="M130,180 L130,230" stroke="#3B4863" stroke-width="1.5" marker-end="url(#s)"/><text x="145" y="210" fill="#6E7A8F">no, t ≥ T_expire</text>
+          <rect x="330" y="118" width="230" height="44" fill="#fff" stroke="#14213D"/><text x="445" y="137" text-anchor="middle">P_close vs oracle P_ref</text><text x="445" y="153" text-anchor="middle" font-size="12" fill="#6E7A8F">within δ_close? use P_close, else P_ref</text>
+          <rect x="30" y="230" width="200" height="44" fill="#fff" stroke="#14213D"/><text x="130" y="249" text-anchor="middle">TWAP over W(D)</text><text x="130" y="265" text-anchor="middle" font-size="12" fill="#6E7A8F">staleness · deviation · record cap</text>
+          <path d="M230,252 L330,252" stroke="#3B4863" stroke-width="1.5" marker-end="url(#s)"/>
+          <rect x="330" y="230" width="230" height="44" fill="#fff" stroke="#14213D"/><text x="445" y="257" text-anchor="middle">P_settle</text>
+          <path d="M445,162 L445,230" stroke="#3B4863" stroke-width="1.5" marker-end="url(#s)"/>
+          <path d="M560,252 L640,252" stroke="#3B4863" stroke-width="1.5" marker-end="url(#s)"/>
+          <rect x="640" y="200" width="230" height="104" fill="#DDEDE6" stroke="#1F7A5C"/>
+          <text x="755" y="225" text-anchor="middle" font-weight="600" fill="#1F7A5C">Payout</text>
+          <text x="755" y="247" text-anchor="middle" font-size="12">min(Q·max(0,P_start−P_settle), MaxPayout)</text>
+          <text x="755" y="267" text-anchor="middle" font-size="12">vault.pay(trader, payout)</text>
+          <text x="755" y="285" text-anchor="middle" font-size="12">vault.release(MaxPayout − payout)</text>
+        </g>
+      </svg>
+      <figcaption>One settlement path for expiry, early close and liquidation; only the source of <code>P_settle</code> differs.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="abuse">
+  <h2><small>§6</small>Anti-abuse rules</h2>
+  <div class="wide">
+    <table>
+      <tr><th>Rule</th><th>Value</th><th>Purpose</th></tr>
+      <tr><td>Position binding</td><td>trader must hold open position ≥ <code>Q</code>, same asset/direction, at mint</td><td>prevents "close the long, keep the put"</td></tr>
+      <tr><td>Activation delay</td><td>protection active at <code>t_mint + 300 s</code>; <code>P_start</code> fixed at mint</td><td>stops buying at the instant a move begins</td></tr>
+      <tr><td>Quote TTL</td><td>signed quote valid 30 s</td><td>prevents stale-price arbitrage</td></tr>
+      <tr><td>Min age of position</td><td>60 s since open</td><td>discourages open-protect-close loops</td></tr>
+      <tr><td>One active contract per position per direction</td><td>v0.1</td><td>simplifies settlement; multiple in v0.2</td></tr>
+      <tr><td>Event surcharge</td><td>pricer applies <code>M_event ≥ 1</code> in configured windows (unlocks, macro prints)</td><td>informed-flow pricing</td></tr>
+      <tr><td>Vol-shock repricing</td><td>realized 1h vol &gt; 2× table → bump σ, pause ≤ 1h buckets 15 min</td><td>avoids selling into a crash at stale prices</td></tr>
+      <tr><td>Per-wallet cap</td><td>§4.2</td><td>limits a single informed player</td></tr>
+    </table>
+    <p>The premium loadings (§3.5) are the primary economic defense; these rules close mechanical loopholes.</p>
+  </div>
+</section>
+
+<section id="contracts">
+  <h2><small>§7</small>Soroban contract architecture</h2>
+  <div class="wide">
+    <h3>7.1 Contracts</h3>
+    <table>
+      <tr><th>Contract</th><th>Responsibility</th></tr>
+      <tr><td><code>tosbi-registry</code></td><td>params, allowlisted PerpDEX adapters, pause, admin (multisig)</td></tr>
+      <tr><td><code>tosbi-vault</code></td><td>Protection Capital accounting, reserve/release, payout, withdrawal queue</td></tr>
+      <tr><td><code>tosbi-book</code></td><td>mint / settle protection contracts, per-contract state</td></tr>
+      <tr><td><code>tosbi-quote-verifier</code></td><td>verifies TOSBI pricer signature over quote payload</td></tr>
+      <tr><td><code>tosbi-oracle-adapter</code></td><td>wraps SEP-40 oracle(s): lastprice, twap, decimals, resolution, safety checks</td></tr>
+      <tr><td><code>perpdex-adapter-*</code></td><td>one per PerpDEX: reads Position Contract, normalizes fields</td></tr>
+    </table>
+
+    <h3>7.2 Quote and mint flow</h3>
+    <figure>
+      <svg viewBox="0 0 900 400" role="img" aria-label="Quote and mint sequence">
+        <defs><marker id="q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#3B4863"/></marker></defs>
+        <g font-family="IBM Plex Sans, Carlito, sans-serif" font-size="13" fill="#14213D">
+          <!-- lanes -->
+          <g font-weight="600" text-anchor="middle">
+            <text x="100" y="30">Frontend</text><text x="300" y="30">Pricer (off-chain)</text><text x="500" y="30">tosbi-book</text><text x="700" y="30">vault / adapters</text>
+          </g>
+          <g stroke="#C9D0D8" stroke-dasharray="3 3"><line x1="100" y1="40" x2="100" y2="380"/><line x1="300" y1="40" x2="300" y2="380"/><line x1="500" y1="40" x2="500" y2="380"/><line x1="700" y1="40" x2="700" y2="380"/></g>
+          <!-- messages -->
+          <path d="M100,70 L300,70" stroke="#3B4863" stroke-width="1.5" marker-end="url(#q)"/><text x="200" y="62" text-anchor="middle" font-size="12">quote(perpdex, position_id, A, D, R)</text>
+          <path d="M300,100 L700,100" stroke="#3B4863" stroke-width="1.5" marker-end="url(#q)"/><text x="500" y="92" text-anchor="middle" font-size="12">read position, vault state (K, U, C), vol table</text>
+          <path d="M300,140 L100,140" stroke="#3B4863" stroke-width="1.5" marker-end="url(#q)"/><text x="200" y="132" text-anchor="middle" font-size="12">signed Quote {…, premium, fee, expires_at, nonce}</text>
+          <path d="M100,180 L500,180" stroke="#3B4863" stroke-width="1.5" marker-end="url(#q)"/><text x="300" y="172" text-anchor="middle" font-size="12">buy(quote, sig)</text>
+          <rect x="420" y="200" width="160" height="90" fill="#fff" stroke="#14213D"/>
+          <text x="500" y="220" text-anchor="middle" font-size="12">verify sig, TTL, nonce</text>
+          <text x="500" y="238" text-anchor="middle" font-size="12">re-read position (open, size ≥ Q,</text>
+          <text x="500" y="254" text-anchor="middle" font-size="12">asset/dir match, |mark−P_start| ≤ δ_quote)</text>
+          <text x="500" y="274" text-anchor="middle" font-size="12">check full backing + caps</text>
+          <path d="M500,300 L700,300" stroke="#3B4863" stroke-width="1.5" marker-end="url(#q)"/><text x="600" y="292" text-anchor="middle" font-size="12">transfer Π+F; vault.reserve(MaxPayout)</text>
+          <path d="M500,340 L100,340" stroke="#1F7A5C" stroke-width="2" marker-end="url(#q)"/><text x="300" y="332" text-anchor="middle" font-size="12" fill="#1F7A5C" font-weight="600">Minted event, status Pending</text>
+        </g>
+      </svg>
+      <figcaption>The pricer's loadings may be 30 s stale; the invariant and caps are re-checked on-chain regardless, so a stale quote can never over-commit the vault.</figcaption>
+    </figure>
+<pre>Quote {
+  perpdex: Address, position_id: BytesN&lt;32&gt;, trader: Address,
+  asset: Symbol, direction: u32,
+  A: i128, Q: i128, P_start: i128, P_end: i128,
+  D: u64, MaxPayout: i128, premium: i128, fee: i128,
+  vol_used: u32, quoted_at: u64, expires_at: u64, nonce: u64
+}
+sig = ed25519( pricer_key, sha256(Quote) )</pre>
+
+    <h3>7.3 Contract record (persistent storage)</h3>
+<pre>struct Protection {
+    id: u64,
+    trader: Address,
+    perpdex: Address,
+    position_id: BytesN&lt;32&gt;,
+    asset: Symbol,
+    direction: Direction,        // Long | Short
+    q: i128,                     // units, 7 decimals
+    p_start: i128,               // oracle decimals
+    p_end: i128,
+    max_payout: i128,            // USDC 7 decimals
+    premium_paid: i128,
+    fee_paid: i128,
+    t_mint: u64,
+    t_active: u64,               // t_mint + activation delay
+    t_expire: u64,
+    window_secs: u32,
+    status: Status,              // Pending | Active | Settled | Cancelled
+    settle_price: Option&lt;i128&gt;,
+    payout: Option&lt;i128&gt;,
+}</pre>
+    <figure>
+      <svg viewBox="0 0 900 170" role="img" aria-label="Contract status state machine">
+        <defs><marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#3B4863"/></marker></defs>
+        <g font-family="IBM Plex Sans, Carlito, sans-serif" font-size="13" fill="#14213D">
+          <rect x="40" y="50" width="150" height="50" rx="25" fill="#fff" stroke="#14213D" stroke-width="2"/><text x="115" y="80" text-anchor="middle">Pending</text>
+          <rect x="300" y="50" width="150" height="50" rx="25" fill="#fff" stroke="#14213D" stroke-width="2"/><text x="375" y="80" text-anchor="middle">Active</text>
+          <rect x="560" y="50" width="150" height="50" rx="25" fill="#DDEDE6" stroke="#1F7A5C" stroke-width="2"/><text x="635" y="80" text-anchor="middle">Settled</text>
+          <path d="M190,75 L300,75" stroke="#3B4863" stroke-width="1.5" marker-end="url(#m)"/><text x="245" y="65" text-anchor="middle" font-size="12">t ≥ t_active</text>
+          <path d="M450,75 L560,75" stroke="#3B4863" stroke-width="1.5" marker-end="url(#m)"/><text x="505" y="65" text-anchor="middle" font-size="12">expiry / close / liquidation</text>
+          <path d="M115,100 C115,150 635,150 635,100" fill="none" stroke="#3B4863" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#m)"/><text x="375" y="145" text-anchor="middle" font-size="12" fill="#6E7A8F">position closed before activation: settle at P_close (payout 0 if no move)</text>
+          <rect x="760" y="50" width="110" height="50" rx="25" fill="#E8ECF0" stroke="#6E7A8F"/><text x="815" y="80" text-anchor="middle" fill="#3B4863">Cancelled</text>
+          <text x="815" y="120" text-anchor="middle" font-size="11" fill="#6E7A8F">admin only, pre-activation</text>
+        </g>
+      </svg>
+      <figcaption>Status transitions. There is no trader-initiated cancel; <code>Cancelled</code> exists only for admin recovery before activation.</figcaption>
+    </figure>
+
+    <h3>7.4 Storage and TTL</h3>
+    <ul>
+      <li><code>Protection</code> records, vault balances, reserve totals, per-(asset,direction) totals, per-wallet totals: <strong>persistent</strong> storage.</li>
+      <li>Nonce set: persistent, pruned after settlement. Quote payloads: not stored.</li>
+      <li>Extend TTL on every write and on every read in <code>settle</code>; keeper extends TTL for all active records every 24h. Target TTL ≥ <code>D + 14 days</code>.</li>
+      <li>Never use temporary storage for anything that affects money.</li>
+    </ul>
+
+    <h3>7.5 Keeper</h3>
+    <p>Off-chain service that (a) calls <code>settle(id)</code> at <code>t_expire</code> within one oracle resolution; (b) watches PerpDEX close events and calls <code>settle_early(id)</code>; (c) extends TTLs; (d) posts vol-table hashes. Anyone may call <code>settle</code>; the keeper is a liveness convenience, not a trust dependency.</p>
+
+    <h3>7.6 Required PerpDEX Position Contract interface</h3>
+<pre>fn get_position(position_id: BytesN&lt;32&gt;) -&gt; Position {
+    owner: Address, asset: Symbol, direction: Direction,
+    size: i128, entry_price: i128, mark_price: i128,
+    status: PositionStatus,          // Open | Closed | Liquidated
+    close_price: Option&lt;i128&gt;, close_ts: Option&lt;u64&gt;,
+}
+event PositionClosed(position_id, close_price, close_ts, reason)</pre>
+    <p class="note">If a PerpDEX cannot expose <code>close_price</code> on-chain, the adapter falls back to oracle-only early settlement (<code>P_settle = P_ref</code>).</p>
+
+    <h3>7.7 Oracle adapter (SEP-40)</h3>
+    <p>Uses <code>lastprice(asset)</code>, <code>twap(asset, records)</code>, <code>decimals()</code>, <code>resolution()</code>. <code>records = ceil(W / resolution)</code>. Read <code>decimals()</code> at runtime; never hard-code. Primary: Reflector. Secondary (deviation check only): Pyth or RedStone on Stellar.</p>
+    <div class="box amber">If Reflector's public resolution is 5 minutes, the 5-minute floor equals one record. For ≤ 1h buckets either use Reflector's paid faster feed or accept single-record settlement with the per-record cap.</div>
+
+    <h3>7.8 Events</h3>
+    <p><code>Minted</code>, <code>Activated</code>, <code>Settled{price, payout}</code>, <code>SettledEarly</code>, <code>LateSettlement</code>, <code>DegradedSettlement</code>, <code>CapitalDeposited</code>, <code>WithdrawalRequested</code>, <code>WithdrawalExecuted</code>, <code>ParamsUpdated</code>, <code>Paused</code>.</p>
+
+    <h3>7.9 Admin and upgrades</h3>
+    <p>Multisig admin (TOSBI + PerpDEX signers). Parameter changes time-locked 24h except <code>pause</code>. Contract upgrade via Soroban WASM upgrade behind the same time-lock.</p>
+  </div>
+</section>
+
+<section id="offchain">
+  <h2><small>§8</small>Off-chain services</h2>
+  <div class="wide">
+    <table>
+      <tr><th>Service</th><th>Responsibility</th></tr>
+      <tr><td>Pricer</td><td>vol table, loadings, quote signing; stateless HTTP; signing key in HSM/KMS</td></tr>
+      <tr><td>Vol calibrator</td><td>empirical bucket σ (§3.3), SVI (v1.1), event calendar, vol-shock detection</td></tr>
+      <tr><td>Keeper</td><td>settlement, early settlement, TTL extension</td></tr>
+      <tr><td>Risk monitor</td><td>utilization, concentration, loss ratio, oracle health, alerts; can trigger pause</td></tr>
+      <tr><td>Depth estimator</td><td>daily <code>Depth_a</code> for the liquidity cap (§4.3)</td></tr>
+    </table>
+    <p>Publish the vol table and its hash on-chain (or IPFS + on-chain hash) per refresh so PerpDEX partners can audit quotes.</p>
+  </div>
+</section>
+
+<section id="params">
+  <h2><small>§9</small>Initial risk parameters</h2>
+  <div class="wide">
+    <table>
+      <tr><th>Parameter</th><th>Value</th><th>Section</th><th>Parameter</th><th>Value</th><th>Section</th></tr>
+      <tr><td>Buckets</td><td>15m, 1h, 4h, 12h, 1d, 3d, 7d</td><td>2.1</td><td>Concentration cap</td><td>25% per (asset,dir); 40% per asset</td><td>4.2</td></tr>
+      <tr><td><code>R_min</code>, <code>R_max</code></td><td>5%, 50%</td><td>2.1</td><td>Wallet cap</td><td>2% of K, ≤ 25k USDC</td><td>4.2</td></tr>
+      <tr><td><code>r</code></td><td>0</td><td>3.1</td><td><code>A_min</code>, <code>A_max</code></td><td>20, 50,000 USDC</td><td>4.2</td></tr>
+      <tr><td><code>σ_floor</code></td><td>XLM 60%, BTC/ETH 50%, both directions</td><td>3.3</td><td>Global <code>U</code> cap</td><td>90%</td><td>4.2</td></tr>
+      <tr><td><code>λ_u</code>, <code>p_u</code></td><td>0.5, 2</td><td>3.5</td><td><code>κ</code></td><td>0.5</td><td>4.3</td></tr>
+      <tr><td><code>λ_c</code>, <code>p_c</code></td><td>1.0, 2</td><td>3.5</td><td><code>T_withdraw</code></td><td>7 days</td><td>4.4</td></tr>
+      <tr><td><code>ρ</code></td><td>5%</td><td>3.5</td><td><code>W(D)</code></td><td>clamp(5m, 0.53√D_min, 30m)</td><td>5.1</td></tr>
+      <tr><td><code>Π_min</code></td><td>max(0.5, 0.10% A)</td><td>3.6</td><td><code>δ_close</code></td><td>1.5%</td><td>5.2</td></tr>
+      <tr><td><code>F</code></td><td>max(0.5, 30 bp × A)</td><td>3.7</td><td><code>δ_oracle</code></td><td>2%</td><td>5.4</td></tr>
+      <tr><td>Activation delay</td><td>300 s</td><td>6</td><td><code>δ_quote</code></td><td>0.5%</td><td>7.2</td></tr>
+      <tr><td>Quote TTL</td><td>30 s</td><td>6</td><td><code>T_stale_max</code></td><td>2 h</td><td>5.5</td></tr>
+    </table>
+    <p class="note">KPIs to tune these: loss ratio (§11), utilization distribution, quote-to-mint conversion.</p>
+  </div>
+</section>
+
+<section id="example">
+  <h2><small>§10</small>Worked example</h2>
+  <div>
+    <h3>10.1 LONG protection</h3>
+    <p>XLM LONG, <code>P_start = 0.20</code>, <code>A = 1,000 USDC</code> → <code>Q = 5,000 XLM</code>, <code>D = 1d</code>, <code>R = 25%</code> → <code>P_end = 0.15</code>, <code>MaxPayout = 250</code>. Vol table: <code>σ_down,1d(XLM) = 100%</code>.</p>
+<pre class="math">τ = 1/365.25 = 0.002738          σ√τ = 0.05232
+
+ATM put (r = 0):   d1 = σ√τ/2 = 0.02616,   d2 = −0.02616
+Put(0.20) = 0.20 × [ N(0.02616) − N(−0.02616) ] = 0.20 × 0.02087 = 0.004174 per unit
+Put(0.15): ln(0.20/0.15) = 0.2877,  d2 ≈ 5.47,  N(−5.47) ≈ 2×10⁻⁸  → negligible
+
+Π_fair = 5,000 × 0.004174 = 20.87 USDC   (2.09% of A)
+
+vault: K = 500,000; active reserve 249,750 → U' = 0.50 → M_u = 1.125
+       XLM-long reserve 99,750            → C' = 0.20 → M_c = 1.04   (below 25% cap, §4.2)
+
+Π = 20.87 × 1.125 × 1.04 × 1.05 = 25.64 USDC
+F = max(0.5, 0.003 × 1,000)    =  3.00 USDC
+Total cost                      = 28.64 USDC  (2.86% of A)
+
+W = 0.53 × √1440 ≈ 20 min</pre>
+    <table>
+      <tr><th>Outcome at expiry</th><th class="num">Payout</th><th>Note</th></tr>
+      <tr><td><code>P_settle = 0.23</code></td><td class="num">0</td><td>trader net −28.64</td></tr>
+      <tr><td><code>P_settle = 0.17</code></td><td class="num">150</td><td>5,000 × 0.03; net −28.64 after offsetting a 150 position loss</td></tr>
+      <tr><td><code>P_settle = 0.10</code></td><td class="num">250</td><td>5,000 × 0.10 = 500, capped</td></tr>
+      <tr><td>early close at 0.18, oracle 0.181</td><td class="num">100</td><td>dev 0.55% ≤ δ_close → use P_close</td></tr>
+    </table>
+    <p>Vault economics for this contract: +25.64 premium in, 250 reserved for one day, expected payout ≈ 20.87 by construction of σ → expected margin ≈ 4.77 plus the loadings' cushion.</p>
+
+    <h3>10.2 SHORT protection</h3>
+    <p>XLM SHORT, <code>P_start = 0.20</code>, <code>A = 1,000 USDC</code> → <code>Q = 5,000 XLM</code>, <code>D = 1d</code>, <code>R = 25%</code> → <code>P_end = 0.25</code>, <code>MaxPayout = 250</code>. Vol table: <code>σ_up,1d(XLM) = 90%</code> (calibrated on rises; lower than the 100% downside figure).</p>
+<pre class="math">σ√τ = 0.90 × 0.05232 = 0.04709
+
+ATM call (r = 0):  d1 = σ√τ/2 = 0.02355,   d2 = −0.02355
+Call(0.20) = 0.20 × [ N(0.02355) − N(−0.02355) ] = 0.20 × 0.01879 = 0.003757 per unit
+Call(0.25): ln(0.20/0.25) = −0.2231,  d1 ≈ −4.71,  N(−4.71) ≈ 1.2×10⁻⁶  → negligible
+
+Π_fair = 5,000 × 0.003757 = 18.79 USDC   (1.88% of A)
+
+vault: K = 500,000; active reserve 249,750 → U' = 0.50 → M_u = 1.125
+       XLM-short reserve 49,750           → C' = 0.10 → M_c = 1.01
+
+Π = 18.79 × 1.125 × 1.01 × 1.05 = 22.41 USDC
+F                                =  3.00 USDC
+Total cost                       = 25.41 USDC  (2.54% of A)</pre>
+    <table>
+      <tr><th>Outcome at expiry</th><th class="num">Payout</th><th>Note</th></tr>
+      <tr><td><code>P_settle = 0.17</code></td><td class="num">0</td><td>position gained 150; trader net −25.41</td></tr>
+      <tr><td><code>P_settle = 0.23</code></td><td class="num">150</td><td>5,000 × 0.03; net −25.41 after offsetting a 150 position loss</td></tr>
+      <tr><td><code>P_settle = 0.30</code></td><td class="num">250</td><td>5,000 × 0.10 = 500, capped</td></tr>
+      <tr><td>early close at 0.22</td><td class="num">100</td><td>5,000 × 0.02</td></tr>
+    </table>
+    <p>The short costs less than the long on the same terms (25.41 vs 28.64) for two reasons: the upside vol is lower, and short protection is less crowded in this vault state, so its concentration loading is smaller.</p>
+  </div>
+</section>
+
+<section id="monitoring">
+  <h2><small>§11</small>Monitoring</h2>
+  <div>
+<pre class="math">LR_epoch = Σ payouts / Σ premiums       epoch = 7 days; also 30-day rolling
+
+target:   LR ≤ 0.80 rolling 30d
+raise ρ or bucket σ:   LR > 1.0 for two consecutive weeks
+lower ρ / loadings:    LR < 0.4 for 8 weeks with low utilization</pre>
+    <p>Track LR per bucket and per asset to see which tenors are mispriced; expect short buckets to fail first. Also: utilization time series; max concentration; oracle staleness incidents; settlement latency; count of <code>δ_close</code> overrides (wash-trading signal); quote-to-mint conversion by price level (demand elasticity).</p>
+  </div>
+</section>
+
+<section id="testing">
+  <h2><small>§12</small>Test and validation plan</h2>
+  <div>
+    <ol class="timeline">
+      <li><b>Pricing backtest</b>XLM/BTC/ETH hourly, 2022–2026. Simulate selling every bucket × R daily; compute realized LR under the empirical-σ calibration; confirm LR &lt; 1 over the full period; inspect worst 30-day windows (May 2022, Nov 2022, Aug 2024, Oct 2025, Feb 2026).</li>
+      <li><b>Crash stress</b>Instantaneous −30% and −50% with a fully concentrated book at cap; verify solvency and that payouts equal Σ MaxPayout.</li>
+      <li><b>Oracle attack simulation</b>Inject single-record spikes of +15% / −15% / −40% into the TWAP window; confirm per-record cap and deviation logic bound payout error to &lt; δ_oracle.</li>
+      <li><b>Wash-close test</b>Close position at ±3% from oracle; verify δ_close fallback.</li>
+      <li><b>Invariant fuzzing</b>Randomized mint/settle/withdraw sequences; assert full-backing and cap invariants after every step.</li>
+      <li><b>TTL test</b>7-day contract with no interaction; verify keeper extension and archival-restore path.</li>
+      <li><b>Latency</b>Keeper settles within one oracle resolution of expiry ≥ 99% of the time on testnet.</li>
+      <li><b>Audit</b>Apply to the Soroban Audit Bank via SCF Build.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="roadmap">
+  <h2><small>§13</small>Roadmap after v0.1</h2>
+  <div>
+    <table>
+      <tr><th>Version</th><th>Change</th></tr>
+      <tr><td>v0.2</td><td>Off-bucket durations (variance interpolation), partial close, multiple contracts per position</td></tr>
+      <tr><td>v1.1</td><td>SVI surface; secondary oracle deviation check live; event calendar surcharges</td></tr>
+      <tr><td>v2</td><td>Tranched vault: PerpDEX first-loss junior + public senior (Architecture 4)</td></tr>
+      <tr><td>v2.x</td><td>Streaming / AmPO product for open-ended protection (Architecture 3); resolve patent question first</td></tr>
+      <tr><td>Later</td><td>Partial delta-hedging once a Stellar perp venue has deep mainnet liquidity (Architecture 5)</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="refs">
+  <h2><small>§14</small>References</h2>
+  <div class="wide">
+    <h4>Option pricing and volatility</h4>
+    <ul>
+      <li>Black, F. &amp; Scholes, M. (1973). The Pricing of Options and Corporate Liabilities. <em>Journal of Political Economy</em> 81(3).</li>
+      <li>Hull, J. C. <em>Options, Futures, and Other Derivatives</em> (11th ed.), ch. 12, 15.</li>
+      <li>Gatheral, J. &amp; Jacquier, A. (2014). Arbitrage-free SVI volatility surfaces. <em>Quantitative Finance</em> 14(1). <a href="https://arxiv.org/abs/1204.0646">arxiv.org/abs/1204.0646</a></li>
+      <li>Du, L. (2025). Pricing Cryptocurrency Options With Volatility of Volatility. <em>Journal of Futures Markets</em>. <a href="https://onlinelibrary.wiley.com/doi/10.1002/fut.70029">doi:10.1002/fut.70029</a></li>
+      <li>Matic, J. L., Packham, N. &amp; Härdle, W. K. (2023). Hedging Cryptocurrency Options. <em>Review of Derivatives Research</em> 26(1). <a href="https://arxiv.org/abs/2112.06807">arxiv.org/abs/2112.06807</a></li>
+      <li>Alexander, C. &amp; Imeraj, A. (2023). Delta hedging bitcoin options with a smile. <em>Quantitative Finance</em> 23(5). <a href="https://www.tandfonline.com/doi/full/10.1080/14697688.2023.2181205">tandfonline.com</a></li>
+      <li>Alexander, C., Deng, J., Feng, J. &amp; Wan, H. (2021). Net Buying Pressure and the Information in Bitcoin Option Trades. <a href="https://arxiv.org/abs/2109.02776">arxiv.org/abs/2109.02776</a></li>
+      <li>Zbandut, A. (2025). Pricing of wrapped Bitcoin and Ethereum on-chain options. <a href="https://arxiv.org/abs/2512.20190">arxiv.org/abs/2512.20190</a></li>
+    </ul>
+    <h4>Perpetual and streaming designs (§3.4, roadmap)</h4>
+    <ul>
+      <li>Feinstein, Z. (2025). Amortizing Perpetual Options. <a href="https://arxiv.org/abs/2512.06505">arxiv.org/abs/2512.06505</a></li>
+      <li>Bichuch, M. &amp; Feinstein, Z. (2026). Designing On-Chain Options: Amortizing Perpetual Options. <a href="https://arxiv.org/abs/2605.19146">arxiv.org/abs/2605.19146</a></li>
+      <li>Lambert, G. &amp; Kristensen, J. (2022). Panoptic: the perpetual, oracle-free options protocol. <a href="https://arxiv.org/abs/2204.14232">arxiv.org/abs/2204.14232</a></li>
+      <li>Ackerer, D., Hugonnier, J. &amp; Jermann, U. (2026). Perpetual Futures Pricing. <em>Mathematical Finance</em>. <a href="https://arxiv.org/abs/2310.11771">arxiv.org/abs/2310.11771</a></li>
+      <li>Angeris, G., Chitra, T., Evans, A. &amp; Lorig, M. (2023). A primer on perpetuals. <em>SIAM J. Financial Mathematics</em> 14(1).</li>
+    </ul>
+    <h4>Insurance capital and pricing</h4>
+    <ul>
+      <li>Kaas, R., Goovaerts, M., Dhaene, J. &amp; Denuit, M. <em>Modern Actuarial Risk Theory</em> (2nd ed.), ch. 5.</li>
+      <li>Nadler, M., Bekemeier, F. &amp; Schär, F. (2022). DeFi Risk Transfer: Towards A Fully Decentralized Insurance Protocol. <a href="https://arxiv.org/abs/2212.10308">arxiv.org/abs/2212.10308</a></li>
+      <li>Singh, S. F., Michalopoulos, P. &amp; Veneris, A. (2024). BAKUP: Automated, Flexible, and Capital-Efficient Insurance Protocol for DeFi. <a href="https://arxiv.org/abs/2410.09341">arxiv.org/abs/2410.09341</a></li>
+      <li>Bekemeier, F., Schär, F. &amp; Schmeiser, H. (2025). Decentralized Finance risk transfer and smart contract-based insurance. <em>Journal of Banking &amp; Finance</em>. <a href="https://www.sciencedirect.com/science/article/pii/S0378426625002262">sciencedirect.com</a></li>
+    </ul>
+    <h4>Oracle manipulation and settlement</h4>
+    <ul>
+      <li>Mackinga, T., Nadahalli, T. &amp; Wattenhofer, R. (2022). TWAP Oracle Attacks: Easier Done than Said? IACR ePrint 2022/445. <a href="https://eprint.iacr.org/2022/445.pdf">eprint.iacr.org/2022/445</a></li>
+      <li>Chaos Labs. Uniswap V3 TWAP: Assessing TWAP Market Risk. <a href="https://chaoslabs.xyz/posts/chaos-labs-uniswap-v3-twap-market-risk">chaoslabs.xyz</a></li>
+      <li>Hacken. Uniswap v4 Truncated Oracle. <a href="https://hacken.io/discover/uniswap-v4-truncated-oracle/">hacken.io</a></li>
+    </ul>
+    <h4>Industry references</h4>
+    <ul>
+      <li>Bybit Perp Protect. <a href="https://www.bybit.com/en/help-center/article/Perp-Protect">help center</a>, <a href="https://www.bybit.com/en/learn/bybit-guide/contract-insurance">guide</a></li>
+      <li>Nami Insurance docs. <a href="https://docs.namiinsurance.io/">docs.namiinsurance.io</a></li>
+      <li>Bumper. <a href="https://www.bumper.fi/">bumper.fi</a></li>
+    </ul>
+    <h4>Stellar / Soroban</h4>
+    <ul>
+      <li>SEP-40 Oracle interface. <a href="https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0040.md">github.com/stellar/stellar-protocol</a></li>
+      <li>Reflector Network. <a href="https://reflector.network/docs">docs</a>, <a href="https://github.com/reflector-network/reflector-contract">contract</a></li>
+      <li>Stellar oracle providers. <a href="https://developers.stellar.org/docs/data/oracles/oracle-providers">developers.stellar.org</a></li>
+      <li>Soroban state archival / TTL. <a href="https://developers.stellar.org/docs/learn/fundamentals/contract-development/storage/state-archival">developers.stellar.org</a></li>
+      <li>Stellar Community Fund. <a href="https://stellar.org/grants-and-funding">stellar.org/grants-and-funding</a></li>
+      <li>Circle USDC on Stellar. <a href="https://www.circle.com/multi-chain-usdc/stellar">circle.com</a></li>
+    </ul>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  TOSBI · Architecture 1 technical specification · v0.1 draft · Companion documents: "How it works" (explainer) and "Business model".
+</footer>
+
+</body>
+</html>

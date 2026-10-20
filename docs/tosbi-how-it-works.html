@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TOSBI — How it works</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F2F4F6; --ink:#14213D; --ink-2:#3B4863; --mute:#6E7A8F;
+    --rule:#C9D0D8; --green:#1F7A5C; --green-soft:#DDEDE6;
+    --amber:#D9A441; --amber-soft:#F7ECD2; --red:#B4483E; --white:#FFFFFF;
+    --serif:"Fraunces", Georgia, serif;
+    --sans:"IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:17px;line-height:1.58}
+  body{margin:0}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 32px}
+
+  header{padding:64px 0 40px;border-bottom:1px solid var(--rule)}
+  .brand{font-family:var(--serif);font-weight:600;font-size:20px}
+  .brand span{color:var(--mute);font-family:var(--sans);font-weight:400;font-size:15px;margin-left:12px}
+  h1{font-family:var(--serif);font-weight:400;font-size:clamp(36px,5vw,60px);line-height:1.06;letter-spacing:-.015em;margin:36px 0 20px;max-width:18ch}
+  .lede{font-size:20px;max-width:60ch;color:var(--ink-2);margin:0}
+
+  nav.contents{padding:28px 0;border-bottom:1px solid var(--rule)}
+  nav.contents ol{margin:0;padding-left:20px;columns:2;column-gap:40px;font-size:15px}
+  nav.contents li{margin:4px 0}
+  nav.contents a{color:var(--ink);text-decoration:none}
+  nav.contents a:hover{text-decoration:underline}
+
+  section{display:grid;grid-template-columns:220px 1fr;gap:40px;padding:56px 0;border-bottom:1px solid var(--rule)}
+  section > h2{grid-column:1;font-family:var(--serif);font-weight:400;font-size:26px;line-height:1.2;margin:0;position:sticky;top:24px;align-self:start}
+  section > div{grid-column:2;max-width:70ch}
+  section > div.wide{max-width:none}
+  h3{font-weight:600;font-size:17px;margin:30px 0 8px}
+  p{margin:0 0 16px}
+  .note{color:var(--mute);font-size:15px}
+
+  figure{margin:24px 0;background:var(--white);border:1px solid var(--rule);padding:20px}
+  figure svg{width:100%;height:auto;display:block}
+  figcaption{font-size:14px;color:var(--mute);margin-top:10px;max-width:70ch}
+
+  table{width:100%;border-collapse:collapse;font-size:15.5px;margin:20px 0}
+  th{text-align:left;font-weight:600;padding:10px 12px;border-bottom:2px solid var(--ink)}
+  td{padding:10px 12px;border-bottom:1px solid var(--rule);vertical-align:top}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tr.total td{font-weight:600;border-top:2px solid var(--ink);border-bottom:none}
+
+  ol.timeline{list-style:none;padding:0;margin:20px 0;border-left:2px solid var(--rule)}
+  ol.timeline li{padding:0 0 22px 22px;position:relative}
+  ol.timeline li::before{content:"";position:absolute;left:-7px;top:6px;width:12px;height:12px;border-radius:50%;background:var(--paper);border:2px solid var(--ink)}
+  ol.timeline b{display:block;font-weight:600}
+
+  .box{border-left:4px solid var(--green);background:var(--green-soft);padding:16px 20px;margin:20px 0}
+  .box.amber{border-color:var(--amber);background:var(--amber-soft)}
+
+  dl{margin:0}
+  dt{font-weight:600;margin-top:14px}
+  dd{margin:2px 0 0 0;color:var(--ink-2)}
+
+  footer{padding:40px 0 64px;color:var(--mute);font-size:14px}
+
+  @media (max-width:820px){
+    section{grid-template-columns:1fr;gap:12px}
+    section > h2{position:static}
+    nav.contents ol{columns:1}
+  }
+  @media print{
+    html{background:#fff;font-size:12.5px}
+    section{break-inside:avoid;padding:28px 0}
+    section > h2{position:static}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="brand">TOSBI <span>How position protection works, from the ground up</span></div>
+    <h1>The whole picture, explained once.</h1>
+    <p class="lede">This document explains what perpetual trading is, what can go wrong for a trader, what TOSBI protection does about it, who the three parties are, how money moves between them, how prices are set, and how the pool of capital is kept safe. No prior trading knowledge is assumed.</p>
+  </div>
+</header>
+
+<nav class="contents wrap">
+  <ol>
+    <li><a href="#perps">What a perpetual position is</a></li>
+    <li><a href="#liquidation">Why traders get liquidated</a></li>
+    <li><a href="#protection">What protection does</a></li>
+    <li><a href="#parties">The three parties</a></li>
+    <li><a href="#buying">Buying protection, step by step</a></li>
+    <li><a href="#lifecycle">The life of one contract</a></li>
+    <li><a href="#outcomes">The four ways it ends</a></li>
+    <li><a href="#money">Where the money goes</a></li>
+    <li><a href="#pricing">How the price is set</a></li>
+    <li><a href="#pool">How the pool stays safe</a></li>
+    <li><a href="#gaming">Why it can't be gamed</a></li>
+    <li><a href="#roles">Who does what</a></li>
+    <li><a href="#glossary">Glossary</a></li>
+  </ol>
+</nav>
+
+<main class="wrap">
+
+<section id="perps">
+  <h2>What a perpetual position is</h2>
+  <div>
+    <p>The simplest way to trade a coin is to buy it. If you buy XLM at $0.20 and it rises to $0.25, you sell and keep the $0.05. This is called spot trading. You own the coin. But you can only make money if the price goes up, and you can only bet with money you have.</p>
+    <p>A perpetual contract, or "perp," is a bet on the price without owning the coin. You agree with the exchange: if XLM goes up, you receive the difference; if it goes down, you pay it. Two things become possible.</p>
+    <p><strong>You can bet on down.</strong> A "long" position profits when the price rises. A "short" position profits when it falls.</p>
+    <p><strong>You can bet bigger than you have.</strong> You put down $100 of margin and the exchange lets you control a $1,000 position. That is 10× leverage. A 5% move in XLM becomes a 50% move in your money.</p>
+    <p>It is called perpetual because, unlike a traditional futures contract, it never expires. You can hold the bet for a minute or a year.</p>
+    <figure>
+      <svg viewBox="0 0 900 200" role="img" aria-label="Long versus short">
+        <g font-family="IBM Plex Sans" font-size="14" fill="#14213D">
+          <rect x="40" y="40" width="390" height="120" fill="#fff" stroke="#14213D" stroke-width="2"/>
+          <text x="235" y="72" text-anchor="middle" font-family="Fraunces" font-size="20">Long</text>
+          <text x="235" y="100" text-anchor="middle">Bought at $0.20</text>
+          <text x="235" y="122" text-anchor="middle" fill="#1F7A5C">Price rises: you gain</text>
+          <text x="235" y="142" text-anchor="middle" fill="#B4483E">Price falls: you lose</text>
+          <rect x="470" y="40" width="390" height="120" fill="#fff" stroke="#14213D" stroke-width="2"/>
+          <text x="665" y="72" text-anchor="middle" font-family="Fraunces" font-size="20">Short</text>
+          <text x="665" y="100" text-anchor="middle">Sold at $0.20</text>
+          <text x="665" y="122" text-anchor="middle" fill="#B4483E">Price rises: you lose</text>
+          <text x="665" y="142" text-anchor="middle" fill="#1F7A5C">Price falls: you gain</text>
+        </g>
+      </svg>
+      <figcaption>Every perp position is one of these two. TOSBI protection works for both: it pays a long when the price falls and a short when the price rises.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="liquidation">
+  <h2>Why traders get liquidated</h2>
+  <div>
+    <p>The $100 of margin is the exchange's guarantee that you can cover your losses. With 10× leverage, a 10% drop in XLM means your $1,000 position has lost $100, which is all of your margin. Before that point the exchange automatically closes your position and keeps what is left. That is liquidation. There is no warning call. It happens the moment the price touches the line.</p>
+    <p>The real pain is not "XLM went down." It is "XLM dipped 8% for ten minutes, I was liquidated, then it bounced back and I had nothing." Traders have two tools against this today, and both are poor.</p>
+    <table>
+      <tr><th>Tool</th><th>What it does</th><th>Why traders dislike it</th></tr>
+      <tr><td>Stop-loss order</td><td>Closes the position automatically at a chosen price</td><td>You are thrown out of a position you wanted to keep, often right before the recovery</td></tr>
+      <tr><td>Options hedge</td><td>Buy a put option on a separate exchange that gains when the price falls</td><td>Requires understanding strikes, expiries and premiums, and moving money to another venue</td></tr>
+    </table>
+    <p>Most traders use neither. That is why a single bad day can liquidate billions of dollars of positions across the market.</p>
+  </div>
+</section>
+
+<section id="protection">
+  <h2>What protection does</h2>
+  <div>
+    <p>Protection is a promise attached to a position: pay a small fixed amount now, and if the market moves against the position during a chosen period, receive a payout that matches the loss, up to a chosen cap. If the market does not move against the position, the promise expires and the small amount is gone, exactly like car insurance that was never claimed.</p>
+    <p>The example used throughout this document: a trader is long $1,000 of XLM at $0.20. They protect the full $1,000 for one day, covering the first 25% of any fall. The chart shows what they receive for every possible XLM price at the end of the day.</p>
+    <figure>
+      <svg viewBox="0 0 900 340" role="img" aria-label="Payout profile of a protected long position">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6E7A8F"/></marker>
+        </defs>
+        <g font-family="IBM Plex Sans" font-size="14">
+          <line x1="80" y1="270" x2="860" y2="270" stroke="#6E7A8F" stroke-width="1.2" marker-end="url(#ah)"/>
+          <line x1="80" y1="270" x2="80" y2="30" stroke="#6E7A8F" stroke-width="1.2" marker-end="url(#ah)"/>
+          <text x="800" y="298" fill="#6E7A8F">XLM price at settlement</text>
+          <text x="30" y="40" fill="#6E7A8F" transform="rotate(-90 30 40)" text-anchor="end">Payout to trader</text>
+          <rect x="220" y="30" width="300" height="240" fill="#DDEDE6"/>
+          <text x="370" y="55" fill="#1F7A5C" text-anchor="middle" font-weight="600">Coverage range: first 25% of a fall</text>
+          <polyline points="80,90 220,90 520,270 860,270" fill="none" stroke="#14213D" stroke-width="3"/>
+          <line x1="520" y1="270" x2="520" y2="282" stroke="#14213D"/>
+          <text x="520" y="302" text-anchor="middle" fill="#14213D" font-weight="600">$0.20 protection start</text>
+          <line x1="220" y1="270" x2="220" y2="282" stroke="#14213D"/>
+          <text x="220" y="302" text-anchor="middle" fill="#14213D" font-weight="600">$0.15 coverage end</text>
+          <line x1="80" y1="90" x2="220" y2="90" stroke="#D9A441" stroke-width="4"/>
+          <text x="90" y="78" fill="#B0802A" font-weight="600">Maximum payout $250</text>
+          <circle cx="340" cy="162" r="6" fill="#1F7A5C"/>
+          <text x="352" y="158" fill="#1F7A5C">At $0.17 the payout is $150</text>
+          <text x="690" y="255" fill="#6E7A8F" text-anchor="middle">Price at or above $0.20: no payout</text>
+        </g>
+      </svg>
+      <figcaption>Between $0.20 and $0.15, every cent of fall is paid back on the 5,000 XLM protected. Below $0.15 the payout stays at $250. The trader chose that 25% depth; a deeper range costs more.</figcaption>
+    </figure>
+    <div class="box">
+      <strong>Three numbers define every contract.</strong> The protection start (the price when bought), the coverage end (how far down it covers), and the maximum payout (the protected amount times the coverage range). All three are fixed at purchase and never change.
+    </div>
+  </div>
+</section>
+
+<section id="parties">
+  <h2>The three parties</h2>
+  <div>
+    <p>TOSBI does not deal with traders directly. It sits behind the exchange the trader is already using.</p>
+    <figure>
+      <svg viewBox="0 0 900 280" role="img" aria-label="TOSBI, PerpDEX, trader">
+        <defs>
+          <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1F7A5C"/></marker>
+          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#D9A441"/></marker>
+          <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#14213D"/></marker>
+        </defs>
+        <g font-family="IBM Plex Sans" font-size="13">
+          <rect x="30" y="90" width="230" height="100" fill="#14213D"/>
+          <text x="145" y="130" font-size="20" fill="#fff" text-anchor="middle" font-family="Fraunces">TOSBI</text>
+          <text x="145" y="156" fill="#C9D0D8" text-anchor="middle">builds and runs the system</text>
+          <rect x="335" y="90" width="230" height="100" fill="#fff" stroke="#14213D" stroke-width="2"/>
+          <text x="450" y="130" font-size="20" fill="#14213D" text-anchor="middle" font-family="Fraunces">PerpDEX</text>
+          <text x="450" y="156" fill="#3B4863" text-anchor="middle">puts up the capital</text>
+          <rect x="640" y="90" width="230" height="100" fill="#fff" stroke="#14213D" stroke-width="2"/>
+          <text x="755" y="130" font-size="20" fill="#14213D" text-anchor="middle" font-family="Fraunces">Trader</text>
+          <text x="755" y="156" fill="#3B4863" text-anchor="middle">buys protection on a position</text>
+          <path d="M260,115 L335,115" stroke="#1F7A5C" stroke-width="2.5" marker-end="url(#g)"/>
+          <text x="297" y="80" fill="#1F7A5C" text-anchor="middle">contracts, pricing, settlement</text>
+          <path d="M565,115 L640,115" stroke="#1F7A5C" stroke-width="2.5" marker-end="url(#g)"/>
+          <text x="602" y="80" fill="#1F7A5C" text-anchor="middle">a "Protect" button</text>
+          <path d="M640,165 L565,165" stroke="#D9A441" stroke-width="2.5" marker-end="url(#a)"/>
+          <text x="602" y="215" fill="#B0802A" text-anchor="middle">premium and fee</text>
+          <path d="M335,165 L260,165" stroke="#D9A441" stroke-width="2.5" marker-end="url(#a)"/>
+          <text x="297" y="215" fill="#B0802A" text-anchor="middle">fee</text>
+          <path d="M450,190 L450,240 L755,240 L755,190" fill="none" stroke="#14213D" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#k)"/>
+          <text x="602" y="265" fill="#3B4863" text-anchor="middle">payout, when the market moves against the position</text>
+        </g>
+      </svg>
+      <figcaption>The trader only ever sees the PerpDEX. TOSBI supplies what runs behind the button; the PerpDEX supplies the money that pays claims.</figcaption>
+    </figure>
+    <h3>TOSBI</h3>
+    <p>Writes the smart contracts, calculates prices, reads the market price at the end of each contract, pays out, and watches the risk. It takes a small fee on each contract sold. It does not hold the capital and does not carry the payout risk.</p>
+    <h3>The PerpDEX</h3>
+    <p>The exchange where the trader already has a position. It deposits a pool of USDC called Protection Capital. That pool receives every premium and pays every payout. Over time the premiums from traders who did not need protection outweigh the payouts to those who did, and that difference is the PerpDEX's return on its capital.</p>
+    <h3>The trader</h3>
+    <p>Chooses how much to protect, for how long, and how deep. Pays once. Receives a payout automatically if the market moves against them. Never has to file a claim or wait for approval.</p>
+  </div>
+</section>
+
+<section id="buying">
+  <h2>Buying protection, step by step</h2>
+  <div>
+    <ol class="timeline">
+      <li><b>The trader has an open position</b>Long $1,000 of XLM at $0.20. Next to it on the PerpDEX there is a "Protect" button.</li>
+      <li><b>They make three choices</b>How much to protect ($1,000), for how long (1 day, from a menu of 15 minutes up to 7 days), and how deep the coverage goes (25%). The asset, direction and current price are read from the position automatically.</li>
+      <li><b>They see one price</b>Protection start $0.20, covered down to $0.15, maximum payout $250, total cost $28.64. That cost can never grow.</li>
+      <li><b>They confirm</b>$28.64 leaves their wallet. $250 is set aside inside the Protection Capital pool for this contract. The position now shows a "Protected" badge with a countdown.</li>
+      <li><b>They wait</b>For 24 hours there is nothing to do. They can close the position at any time; the protection settles with it.</li>
+      <li><b>It settles</b>At expiry the system reads the market price, works out the payout, and sends it. No claim, no approval.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="lifecycle">
+  <h2>The life of one contract</h2>
+  <div>
+    <p>A contract bought at 14:32 on Tuesday for one day expires at exactly 14:32 on Wednesday, to the second. Not "end of day." Here is everything that happens in between.</p>
+    <figure>
+      <svg viewBox="0 0 900 220" role="img" aria-label="Lifecycle of a one-day protection contract">
+        <line x1="60" y1="120" x2="840" y2="120" stroke="#C9D0D8" stroke-width="4"/>
+        <line x1="640" y1="120" x2="760" y2="120" stroke="#1F7A5C" stroke-width="10"/>
+        <g font-family="IBM Plex Sans" font-size="13" fill="#14213D">
+          <circle cx="60" cy="120" r="9" fill="#14213D"/>
+          <text x="60" y="80" text-anchor="middle" font-weight="600">Tue 14:32</text>
+          <text x="60" y="160" text-anchor="middle">Bought. Start price fixed,</text>
+          <text x="60" y="178" text-anchor="middle">$250 set aside in the pool</text>
+          <circle cx="160" cy="120" r="9" fill="#fff" stroke="#14213D" stroke-width="2"/>
+          <text x="160" y="80" text-anchor="middle" font-weight="600">Tue 14:37</text>
+          <text x="160" y="160" text-anchor="middle">Becomes active after</text>
+          <text x="160" y="178" text-anchor="middle">a 5-minute delay</text>
+          <text x="400" y="80" text-anchor="middle" font-weight="600">24 hours</text>
+          <text x="400" y="160" text-anchor="middle">Nothing happens on-chain.</text>
+          <text x="400" y="178" text-anchor="middle">The contract simply waits</text>
+          <circle cx="640" cy="120" r="9" fill="#1F7A5C"/>
+          <text x="640" y="80" text-anchor="middle" font-weight="600" fill="#1F7A5C">Wed 14:12</text>
+          <text x="640" y="160" text-anchor="middle">Settlement window opens:</text>
+          <text x="640" y="178" text-anchor="middle">prices averaged for 20 minutes</text>
+          <circle cx="760" cy="120" r="9" fill="#1F7A5C"/>
+          <text x="760" y="80" text-anchor="middle" font-weight="600" fill="#1F7A5C">Wed 14:32</text>
+          <text x="760" y="160" text-anchor="middle">Expires. Payout sent,</text>
+          <text x="760" y="178" text-anchor="middle">$250 released back to pool</text>
+        </g>
+      </svg>
+      <figcaption>The 5-minute delay stops anyone buying at the instant a crash starts. The 20-minute average stops anyone spiking the price for one second to trigger a payout.</figcaption>
+    </figure>
+    <h3>Why the start price is fixed at purchase, not at activation</h3>
+    <p>If XLM falls between 14:32 and 14:37, that fall still counts. The delay only prevents buying in the middle of a move; it never takes the first five minutes away from the trader.</p>
+    <h3>Two ways it ends early</h3>
+    <p>If the trader closes the position at 09:00 Wednesday, the protection settles right then at the closing price. If the position is liquidated, the same happens at the liquidation price. Protection survives liquidation because that is often exactly when the trader needs it.</p>
+    <h3>One thing that never happens</h3>
+    <p>The trader cannot cancel protection and get the premium back. Allowing that would let people buy, watch the market for a while, and cancel whenever it went their way.</p>
+  </div>
+</section>
+
+<section id="outcomes">
+  <h2>The four ways it ends</h2>
+  <div>
+    <table>
+      <tr><th>What XLM does</th><th class="num">Position result</th><th class="num">Protection pays</th><th class="num">Trader's net for the day</th></tr>
+      <tr><td>Rises to $0.23</td><td class="num">+$150</td><td class="num">$0</td><td class="num">+$121</td></tr>
+      <tr><td>Falls to $0.17</td><td class="num">−$150</td><td class="num">+$150</td><td class="num">−$29</td></tr>
+      <tr><td>Crashes to $0.10</td><td class="num">−$500</td><td class="num">+$250, the cap</td><td class="num">−$279</td></tr>
+      <tr><td>Trader closes early at $0.18</td><td class="num">−$100</td><td class="num">+$100</td><td class="num">−$29</td></tr>
+    </table>
+    <h3>Price rises</h3>
+    <p>The position made $150. The protection never triggered. The $28.64 is spent, the same as insurance that was never claimed. In the pool, the $250 that was set aside is released and can back the next contract. The pool also kept the premium.</p>
+    <h3>Price falls inside the range</h3>
+    <p>The position lost $150. The protection pays $150. The trader's only cost for the day is the $28.64 they paid up front. The pool pays out $150 of the $250 it had set aside and releases the other $100.</p>
+    <h3>Price crashes below the range</h3>
+    <p>The position lost $500 but coverage stopped at $0.15. The trader receives the full $250 and absorbs the other $250 themselves. This is what the coverage range means, and it is why the quote screen shows "covered down to $0.15" prominently. A trader who wants deeper cover chooses a larger range and pays more.</p>
+    <h3>Trader closes early</h3>
+    <p>The protection settles immediately at the closing price. The trader does not have to wait for expiry, and any unused reservation is released to the pool.</p>
+
+    <h3>The same contract on a short position</h3>
+    <p>A trader who is <em>short</em> $1,000 of XLM at $0.20 is hurt when the price rises. Their protection mirrors the long one: it pays for every cent XLM climbs from $0.20 up to $0.25, then stops at $250. Rises are usually gentler than crashes, so short protection is priced from a separate, slightly lower volatility figure and here costs $25.41 instead of $28.64.</p>
+    <table>
+      <tr><th>What XLM does</th><th class="num">Position result</th><th class="num">Protection pays</th><th class="num">Trader's net for the day</th></tr>
+      <tr><td>Falls to $0.17</td><td class="num">+$150</td><td class="num">$0</td><td class="num">+$125</td></tr>
+      <tr><td>Rises to $0.23</td><td class="num">−$150</td><td class="num">+$150</td><td class="num">−$25</td></tr>
+      <tr><td>Spikes to $0.30</td><td class="num">−$500</td><td class="num">+$250, the cap</td><td class="num">−$275</td></tr>
+      <tr><td>Trader closes early at $0.22</td><td class="num">−$100</td><td class="num">+$100</td><td class="num">−$25</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="money">
+  <h2>Where the money goes</h2>
+  <div>
+    <p>There are two flows: what the trader pays, and what the pool sets aside.</p>
+    <figure>
+      <svg viewBox="0 0 900 330" role="img" aria-label="Flow of premium, fee, reservation and payout">
+        <defs>
+          <marker id="af" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#3B4863"/></marker>
+        </defs>
+        <g font-family="IBM Plex Sans" font-size="13">
+          <rect x="30" y="120" width="170" height="80" fill="#fff" stroke="#14213D" stroke-width="2"/>
+          <text x="115" y="153" font-size="17" text-anchor="middle" fill="#14213D" font-family="Fraunces">Trader pays $28.64</text>
+          <text x="115" y="177" text-anchor="middle" fill="#3B4863">for $1,000, 1 day, 25%</text>
+          <rect x="360" y="40" width="300" height="250" fill="#F7ECD2" stroke="#D9A441" stroke-width="2"/>
+          <text x="510" y="70" font-size="17" text-anchor="middle" fill="#14213D" font-family="Fraunces">Protection Capital (the PerpDEX's pool)</text>
+          <rect x="390" y="95" width="240" height="170" fill="#fff" stroke="#C9D0D8"/>
+          <rect x="390" y="200" width="240" height="65" fill="#1F7A5C"/>
+          <text x="510" y="238" text-anchor="middle" fill="#fff" font-weight="600">Set aside for live contracts</text>
+          <rect x="390" y="190" width="240" height="10" fill="#14213D"/>
+          <text x="510" y="150" text-anchor="middle" fill="#3B4863">Free capital</text>
+          <text x="510" y="168" text-anchor="middle" fill="#3B4863">(can back the next contract)</text>
+          <text x="650" y="199" font-size="12" fill="#14213D">$250 for this one</text>
+          <rect x="730" y="120" width="150" height="80" fill="#14213D"/>
+          <text x="805" y="153" font-size="17" text-anchor="middle" fill="#fff" font-family="Fraunces">TOSBI</text>
+          <text x="805" y="177" text-anchor="middle" fill="#C9D0D8">keeps the fee</text>
+          <path d="M200,140 L360,110" stroke="#3B4863" stroke-width="2" marker-end="url(#af)"/>
+          <text x="270" y="105" fill="#14213D" font-weight="600">$25.64 premium into the pool</text>
+          <path d="M200,185 C 300,320 700,320 805,200" fill="none" stroke="#3B4863" stroke-width="2" marker-end="url(#af)"/>
+          <text x="500" y="318" fill="#14213D" text-anchor="middle" font-weight="600">$3.00 fee to TOSBI</text>
+          <path d="M360,230 L200,230" stroke="#1F7A5C" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#af)"/>
+          <text x="280" y="250" fill="#1F7A5C" text-anchor="middle">payout, only if the market falls</text>
+        </g>
+      </svg>
+      <figcaption>The premium goes into the pool and makes it bigger. Payouts come out of it. The fee never touches the pool.</figcaption>
+    </figure>
+    <h3>What "set aside" means</h3>
+    <p>When the contract is created, $250 inside the pool gets a label: reserved for this contract. That $250 cannot be used to back anyone else's protection while the label is on. No money moves; it is a bookkeeping mark. When the contract settles, the label comes off and whatever was not paid out becomes free capital again.</p>
+    <h3>The one rule the pool follows</h3>
+    <p>The total of all labels can never exceed the money in the pool. If selling a new contract would break that rule, the contract is not sold. This is called full backing. It means the pool can pay every live contract its maximum on the same day and still not run short. It also means the pool is capital-hungry: $250 sits idle for a day to back a contract that, on average, pays out about $21. That trade is deliberate.</p>
+    <div class="box amber">
+      <strong>Why not hold just a fraction, like a normal insurer?</strong> A car insurer holds a fraction of its liabilities because crashes are independent events. Crypto is the opposite. In a market crash every protected long claims on the same day. A pool holding 40% of its promises goes bankrupt in exactly the event it was sold for.
+    </div>
+  </div>
+</section>
+
+<section id="pricing">
+  <h2>How the price is set</h2>
+  <div>
+    <p>The premium is calculated, not guessed. It has a fair part and an adjustment part.</p>
+    <h3>The fair price</h3>
+    <p>For each asset and each duration, TOSBI keeps a measure of how much the price typically moves over that period. This is calibrated from the asset's actual recent history, including its crashes, not only its calm days. It is kept separately for falls and for rises, because crypto prices tend to fall faster than they climb; long protection is priced from the "falls" figure and short protection from the "rises" figure. From that measure, "cover the first 25% of a one-day fall" has a fair price using the same standard formula professional options desks use. For XLM in the example, it comes to $20.87, about 2% of the protected amount. On average, across many such contracts, that is what the pool expects to pay out.</p>
+    <h3>Two adjustments</h3>
+    <p><strong>How full the pool is.</strong> As more of the pool is set aside for live contracts, the price rises. This keeps some capacity free and pays the PerpDEX more when its capital is working harder.</p>
+    <p><strong>How crowded the bet is.</strong> If many traders are protecting the same asset in the same direction, everyone long XLM and nervous, the price of that particular protection rises. A crowded bet is a riskier bet for the pool, and the crowd pays for it.</p>
+    <h3>A safety margin and the fee</h3>
+    <table>
+      <tr><td>Fair price</td><td class="num">$20.87</td></tr>
+      <tr><td>Adjustment for pool fullness (pool 50% used)</td><td class="num">+12.5%</td></tr>
+      <tr><td>Adjustment for crowding (XLM-long is 20% of pool)</td><td class="num">+4%</td></tr>
+      <tr><td>Safety margin</td><td class="num">+5%</td></tr>
+      <tr><td>Premium, paid into the pool</td><td class="num">$25.64</td></tr>
+      <tr><td>Fee, paid to TOSBI (0.3% of $1,000)</td><td class="num">$3.00</td></tr>
+      <tr class="total"><td>Total the trader sees</td><td class="num">$28.64</td></tr>
+    </table>
+    <p>The table that drives the fair price is published, so the PerpDEX can check any quote.</p>
+    <h3>Why duration comes from a menu</h3>
+    <p>Protection can be bought for 15 minutes, 1 hour, 4 hours, 12 hours, 1 day, 3 days or 7 days. Each of those has its own calibrated price. Durations in between are priced by blending the two nearest. The menu exists because the price of protection depends on how wildly the market can swing in that specific window, and calibrating a handful of windows well is far safer than guessing at any arbitrary one.</p>
+  </div>
+</section>
+
+<section id="pool">
+  <h2>How the pool stays safe</h2>
+  <div>
+    <p>Full backing means the pool cannot go insolvent. These limits decide how much of the pool one event can consume. They are written into the smart contract, not into a policy document.</p>
+    <figure>
+      <svg viewBox="0 0 900 230" role="img" aria-label="Pool capacity and limits">
+        <g font-family="IBM Plex Sans" font-size="13">
+          <rect x="40" y="70" width="820" height="60" fill="#fff" stroke="#14213D" stroke-width="2"/>
+          <rect x="40" y="70" width="205" height="60" fill="#1F7A5C"/>
+          <text x="142" y="105" text-anchor="middle" fill="#fff" font-weight="600">XLM long, capped at 25%</text>
+          <rect x="245" y="70" width="82" height="60" fill="#5FA88C"/>
+          <text x="286" y="105" text-anchor="middle" fill="#fff">XLM short</text>
+          <rect x="327" y="70" width="164" height="60" fill="#8FC2AD"/>
+          <text x="409" y="105" text-anchor="middle" fill="#14213D">BTC, ETH, others</text>
+          <text x="632" y="105" text-anchor="middle" fill="#3B4863">Free capital</text>
+          <rect x="778" y="70" width="82" height="60" fill="#F7ECD2"/>
+          <text x="819" y="98" text-anchor="middle" fill="#B0802A" font-weight="600">10%</text>
+          <text x="819" y="116" text-anchor="middle" fill="#B0802A">never sold</text>
+          <line x1="40" y1="150" x2="245" y2="150" stroke="#14213D"/>
+          <text x="142" y="172" text-anchor="middle" fill="#14213D">One asset, one direction: at most 25%</text>
+          <line x1="40" y1="195" x2="327" y2="195" stroke="#14213D"/>
+          <text x="183" y="217" text-anchor="middle" fill="#14213D">One asset, both directions: at most 40%</text>
+          <text x="450" y="50" text-anchor="middle" fill="#3B4863">The whole pool</text>
+        </g>
+      </svg>
+      <figcaption>If XLM crashes 30% in a day and every XLM-long contract pays its maximum, the pool loses at most 25% of its capital, and every one of those contracts had paid a premium in.</figcaption>
+    </figure>
+    <table>
+      <tr><th>Limit</th><th>Value</th><th>What it prevents</th></tr>
+      <tr><td>One asset, one direction</td><td>25% of the pool</td><td>One coin's crash taking most of the pool</td></tr>
+      <tr><td>One asset, both directions</td><td>40% of the pool</td><td>Over-concentration in a single market</td></tr>
+      <tr><td>One trader's wallet</td><td>2% of the pool</td><td>A single large player extracting a large share</td></tr>
+      <tr><td>Never sold</td><td>Last 10% of the pool</td><td>A buffer for settlement timing and price feed errors</td></tr>
+      <tr><td>Relative to market depth</td><td>Varies by asset</td><td>Selling more protection on a thin coin than it would cost to move that coin's price</td></tr>
+      <tr><td>Sudden volatility</td><td>15-minute pause on short durations</td><td>Selling at stale prices while a crash is starting</td></tr>
+    </table>
+    <h3>The one number that matters</h3>
+    <p>Payouts divided by premiums is called the loss ratio. If it is 80%, the pool paid out 80 cents for every dollar of premium it collected and kept 20 cents. The system watches this weekly. If it goes above 100% for two weeks, prices go up. If it stays well below 40% for two months while few traders are buying, prices come down.</p>
+  </div>
+</section>
+
+<section id="gaming">
+  <h2>Why it can't be gamed</h2>
+  <div>
+    <p>A natural worry: a trader who knows the price is about to fall buys protection and collects. Three separate things are hidden in that worry, and each has a different answer.</p>
+    <h3>"They know it will fall" is not an exploit</h3>
+    <p>In the example, the $150 payout arrived because the position lost $150. The trader is not ahead; they avoided a loss and paid $28.64 for the privilege. A trader who truly knew XLM would fall 15% would not buy protection. They would open a short and make $150 with no premium, or more with leverage. Protection is a worse tool for a confident bet than the market itself.</p>
+    <p>The genuine risk is subtler: traders who sense something the price table does not, such as a token unlock tomorrow. The answer is pricing. Crowding raises the premium fast, and short-duration protection is surcharged or paused around known events.</p>
+    <h3>Mechanical loopholes are closed</h3>
+    <table>
+      <tr><th>Trick</th><th>Why it doesn't work</th></tr>
+      <tr><td>Buy protection, close the position, keep the payout promise</td><td>Protection is tied to the position. Close the position and the protection settles that instant.</td></tr>
+      <tr><td>Buy at the exact second a crash begins</td><td>5-minute activation delay; a price quote is only valid for 30 seconds.</td></tr>
+      <tr><td>Close the position at a fake price on a thin order book</td><td>If the closing price differs from the independent price feed by more than 1.5%, the feed's price is used instead.</td></tr>
+      <tr><td>One whale buying a huge amount</td><td>2% of the pool per wallet.</td></tr>
+    </table>
+    <h3>Moving the price is too expensive</h3>
+    <p>The real exploit would be pushing XLM's price down for a moment to trigger a payout. Settlement does not use one moment. It uses the average price over the last 20 to 30 minutes, drawn from several sources. To cheat, someone would have to hold the price down across every venue for half an hour. That costs far more than any single contract pays.</p>
+    <p>None of this stops a trader from being right. Some will buy protection, the market will fall, and they will be glad they did. That is the product working. The pool is paid by the majority who bought protection and did not need it.</p>
+  </div>
+</section>
+
+<section id="roles">
+  <h2>Who does what</h2>
+  <div class="wide">
+    <table>
+      <tr><th>Responsibility</th><th>TOSBI</th><th>PerpDEX</th><th>Trader</th></tr>
+      <tr><td>Deposit the capital that pays claims</td><td></td><td>Yes</td><td></td></tr>
+      <tr><td>Own that capital and withdraw it (with 7 days' notice, if not backing live contracts)</td><td></td><td>Yes</td><td></td></tr>
+      <tr><td>Write and audit the smart contracts</td><td>Yes</td><td></td><td></td></tr>
+      <tr><td>Calculate and publish prices</td><td>Yes</td><td></td><td></td></tr>
+      <tr><td>Read the market price and settle contracts</td><td>Yes</td><td></td><td></td></tr>
+      <tr><td>Watch risk limits and pause if needed</td><td>Yes</td><td>Jointly</td><td></td></tr>
+      <tr><td>Show the "Protect" button and provide position data</td><td></td><td>Yes</td><td></td></tr>
+      <tr><td>Choose amount, duration, depth and pay</td><td></td><td></td><td>Yes</td></tr>
+      <tr><td>Receive premiums</td><td></td><td>Yes</td><td></td></tr>
+      <tr><td>Receive the fee</td><td>Yes</td><td></td><td></td></tr>
+      <tr><td>Bear payout risk</td><td></td><td>Yes</td><td></td></tr>
+      <tr><td>Receive payouts</td><td></td><td></td><td>Yes</td></tr>
+    </table>
+    <p class="note">TOSBI can only move money out of the pool to pay a contracted payout. It cannot withdraw, lend or invest the capital.</p>
+  </div>
+</section>
+
+<section id="glossary">
+  <h2>Glossary</h2>
+  <div>
+    <dl>
+      <dt>Perpetual (perp)</dt><dd>A contract that tracks a coin's price without owning the coin and never expires.</dd>
+      <dt>Long / short</dt><dd>A bet that the price will rise / fall.</dd>
+      <dt>Leverage</dt><dd>Controlling a position larger than the money put down. 10× means $100 controls $1,000.</dd>
+      <dt>Margin</dt><dd>The money put down to open a leveraged position.</dd>
+      <dt>Liquidation</dt><dd>The exchange force-closing a position whose losses have used up its margin.</dd>
+      <dt>PerpDEX</dt><dd>A decentralized exchange for perpetuals, run by smart contracts rather than a company.</dd>
+      <dt>Protected amount</dt><dd>The dollar value of the position the trader chooses to cover.</dd>
+      <dt>Protection start</dt><dd>The price when protection is bought. Losses are measured from here.</dd>
+      <dt>Coverage range</dt><dd>How deep the protection goes, as a percentage fall from the start price.</dd>
+      <dt>Coverage end</dt><dd>The price where protection stops paying more. Start price minus the range.</dd>
+      <dt>Maximum payout</dt><dd>The most a contract can ever pay: protected amount times coverage range.</dd>
+      <dt>Premium</dt><dd>The part of the trader's cost that goes into the pool. It pays for the risk.</dd>
+      <dt>Protection fee</dt><dd>The part of the trader's cost that goes to TOSBI.</dd>
+      <dt>Protection Capital</dt><dd>The USDC pool the PerpDEX deposits to pay claims.</dd>
+      <dt>Reserved / set aside</dt><dd>Money in the pool labelled for one live contract and unavailable to others.</dd>
+      <dt>Full backing</dt><dd>The rule that reservations can never exceed the pool.</dd>
+      <dt>Settlement</dt><dd>Reading the market price at the end of a contract and paying what is owed.</dd>
+      <dt>Settlement window</dt><dd>The period over which prices are averaged to get the settlement price.</dd>
+      <dt>Oracle</dt><dd>A service that publishes market prices onto the blockchain for contracts to read.</dd>
+      <dt>Loss ratio</dt><dd>Payouts divided by premiums. The health measure of the pool.</dd>
+      <dt>USDC</dt><dd>A dollar-pegged stablecoin. All amounts in this system are in USDC.</dd>
+    </dl>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap">
+  TOSBI · How it works · Example figures use XLM at $0.20 with 100% annualized volatility and are illustrative.
+</footer>
+
+</body>
+</html>
