@@ -1,0 +1,43 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { Keypair, StrKey } from "@stellar/stellar-sdk";
+import { signQuote, type Quote } from "../src/quote.ts";
+
+// Mirrored in contracts/protection/src/test.rs (h5_js_signed_quote_is_accepted).
+const FIXTURE: Quote = {
+  vault: StrKey.encodeContract(Buffer.alloc(32, 1)),
+  trader: StrKey.encodeContract(Buffer.alloc(32, 2)),
+  asset: "XLM",
+  direction: "long",
+  amount: 10_000_000_000n,
+  qty: 50_000_000_000n,
+  p_start: 2_000_000n,
+  p_end: 1_500_000n,
+  duration: 86_400n,
+  max_payout: 2_500_000_000n,
+  premium: 256_400_000n,
+  fee: 30_000_000n,
+  vol_bps: 10_000,
+  quoted_at: 1_000_000n,
+  expires_at: 1_000_030n,
+  nonce: 42n,
+};
+const SECRET = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7)).secret();
+const XDR_HEX =
+  "0000001100000001000000100000000f00000006616d6f756e7400000000000a000000000000000000000002540be4000000000f0000000561737365740000000000000f00000003584c4d000000000f00000009646972656374696f6e00000000000003000000000000000f000000086475726174696f6e0000000500000000000151800000000f0000000a657870697265735f617400000000000500000000000f425e0000000f00000003666565000000000a00000000000000000000000001c9c3800000000f0000000a6d61785f7061796f757400000000000a0000000000000000000000009502f9000000000f000000056e6f6e636500000000000005000000000000002a0000000f00000005705f656e640000000000000a0000000000000000000000000016e3600000000f00000007705f7374617274000000000a000000000000000000000000001e84800000000f000000077072656d69756d000000000a0000000000000000000000000f485a800000000f00000003717479000000000a00000000000000000000000ba43b74000000000f0000000971756f7465645f61740000000000000500000000000f42400000000f000000067472616465720000000000120000000102020202020202020202020202020202020202020202020202020202020202020000000f000000057661756c74000000000000120000000101010101010101010101010101010101010101010101010101010101010101010000000f00000007766f6c5f627073000000000300002710";
+const SIG =
+  "dddebb2eabfc3881b728e2430be21fa3980269dad817bc61925049820dee0ba92bfeced96055fe290b163a0d0e3005e38300f5246a96deae8f22b1ae230bc903";
+
+test("H5: signature over canonical quote XDR matches the Rust fixture", () => {
+  const { xdr, signature } = signQuote(FIXTURE, SECRET);
+  assert.equal(Buffer.from(xdr, "base64").toString("hex"), XDR_HEX);
+  assert.equal(signature, SIG);
+});
+
+test("signature verifies under the pricer public key and breaks on tamper", () => {
+  const kp = Keypair.fromSecret(SECRET);
+  const { xdr, signature } = signQuote(FIXTURE, SECRET);
+  assert.ok(kp.verify(Buffer.from(xdr, "base64"), Buffer.from(signature, "hex")));
+  const tampered = signQuote({ ...FIXTURE, premium: 1n }, SECRET);
+  assert.ok(!kp.verify(Buffer.from(tampered.xdr, "base64"), Buffer.from(signature, "hex")));
+});
