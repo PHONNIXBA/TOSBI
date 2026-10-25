@@ -1,0 +1,4687 @@
+diff --git a/.github/workflows/recalibrate.yml b/.github/workflows/recalibrate.yml
+new file mode 100644
+index 0000000..b10f630
+--- /dev/null
++++ b/.github/workflows/recalibrate.yml
+@@ -0,0 +1,31 @@
++# Recalibrates the vol tables every 4 hours (spec §3.3), publishes them to the Worker's KV, and
++# records their hash on-chain. Needs repo variable VAULT_ID and secrets OPERATOR_SECRET,
++# CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID.
++name: Recalibrate vol tables
++on:
++  schedule:
++    - cron: "0 */4 * * *"
++  workflow_dispatch:
++jobs:
++  recalibrate:
++    runs-on: ubuntu-latest
++    defaults:
++      run:
++        working-directory: pricer
++    env:
++      RPC_URL: https://soroban-testnet.stellar.org
++      NETWORK_PASSPHRASE: "Test SDF Network ; September 2015"
++      VAULT_ID: ${{ vars.VAULT_ID }}
++      OPERATOR_SECRET: ${{ secrets.OPERATOR_SECRET }}
++      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
++      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 24
++      - run: npm ci
++      - run: for a in XLM BTC ETH; do npm run calibrate -- "$a"; done
++      - run: node scripts/publish-vol.ts
++      - run: npx wrangler kv key put vol-tables --path vol-bundle.json --binding KV --remote
++      - run: node scripts/publish-vol.ts --post
+diff --git a/.gitignore b/.gitignore
+index 5208488..f514549 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -4,3 +4,4 @@ node_modules/
+ .wrangler/
+ test_snapshots/
+ .gstack/
++pricer/vol-bundle.json
+diff --git a/Cargo.lock b/Cargo.lock
+index 9c8155a..a901ea1 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1889,12 +1889,28 @@ version = "1.13.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+ 
++[[package]]
++name = "tosbi-mock-oracle"
++version = "0.1.0"
++dependencies = [
++ "soroban-sdk",
++]
++
++[[package]]
++name = "tosbi-mock-perpdex"
++version = "0.1.0"
++dependencies = [
++ "soroban-sdk",
++]
++
+ [[package]]
+ name = "tosbi-protection"
+ version = "0.1.0"
+ dependencies = [
+  "ed25519-dalek",
+  "soroban-sdk",
++ "tosbi-mock-oracle",
++ "tosbi-mock-perpdex",
+ ]
+ 
+ [[package]]
+diff --git a/README.md b/README.md
+index 0a59366..2c1c1ef 100644
+--- a/README.md
++++ b/README.md
+@@ -1,13 +1,16 @@
+ # TOSBI — Instaward 1
+ 
+-Protection Vault + Book contract, signed-quote pricer, and testnet demo for [SOW 1](docs/tosbi-instaward-1-sow.md). Design reference: [Architecture 1 spec](docs/tosbi-architecture-1-spec.md).
++Protection vault, settlement, position binding, risk caps and governance on Soroban, a signed-quote pricer with keeper, and a testnet demo, for [SOW 1](docs/tosbi-instaward-1-sow.md). Design references: [Architecture 1 spec](docs/tosbi-architecture-1-spec.md), [production scope](docs/superpowers/specs/2026-10-15-tosbi-production-scope-design.md).
+ 
+ | SOW deliverable | Where |
+ |---|---|
+-| 1. Vault + Book Soroban contract | [contracts/protection/src/lib.rs](contracts/protection/src/lib.rs) |
+-| 2. Demo page | [pricer/public/index.html](pricer/public/index.html), served with its API by [pricer/src/worker.ts](pricer/src/worker.ts) (Cloudflare Worker) |
+-| 3. Pricer bootstrap | [pricer/src/pricing.ts](pricer/src/pricing.ts) (Black–Scholes spreads, loadings), [pricer/src/quote.ts](pricer/src/quote.ts) (ed25519 quote signing), [pricer/scripts/calibrate.ts](pricer/scripts/calibrate.ts) → [pricer/vol-table.json](pricer/vol-table.json) |
+-| 4. Tests | [contracts/protection/src/test.rs](contracts/protection/src/test.rs), [pricer/test/](pricer/test/), [pricer/scripts/e2e.ts](pricer/scripts/e2e.ts) |
++| Vault, settlement, position binding, caps | [contracts/protection/src/lib.rs](contracts/protection/src/lib.rs), [oracle.rs](contracts/protection/src/oracle.rs), [position.rs](contracts/protection/src/position.rs) |
++| Governance (roles, pause, timelock) | [contracts/protection/src/governance.rs](contracts/protection/src/governance.rs), [scripts/admin.sh](scripts/admin.sh) |
++| Reference PerpDEX and test oracle | [contracts/mock-perpdex](contracts/mock-perpdex/src/lib.rs), [contracts/mock-oracle](contracts/mock-oracle/src/lib.rs) |
++| Demo page | [pricer/public/index.html](pricer/public/index.html), served with its API by [pricer/src/worker.ts](pricer/src/worker.ts) (Cloudflare Worker) |
++| Pricer | [pricer/src/pricing.ts](pricer/src/pricing.ts), [pricer/src/service.ts](pricer/src/service.ts), [pricer/src/quote.ts](pricer/src/quote.ts), [pricer/scripts/calibrate.ts](pricer/scripts/calibrate.ts) → [pricer/vol-tables/](pricer/vol-tables/) |
++| Keeper, vol-shock, depth | [pricer/src/keeper.ts](pricer/src/keeper.ts), [pricer/src/market.ts](pricer/src/market.ts), [.github/workflows/recalibrate.yml](.github/workflows/recalibrate.yml) |
++| Tests | [contracts/protection/src/test.rs](contracts/protection/src/test.rs) and [test/](contracts/protection/src/test/), [pricer/test/](pricer/test/), [pricer/scripts/e2e.ts](pricer/scripts/e2e.ts) |
+ 
+ ## Testnet deployment
+ 
+@@ -25,24 +28,27 @@ Pool seeded with 10,000 tUSDC; per-wallet cap 2% of the pool. The demo's spot pr
+ ## Run
+ 
+ ```sh
+-cargo test                      # contract: 27 tests
++cargo test                      # contracts
+ cd pricer && npm install
+-npm test && npm run typecheck   # pricer: 16 tests
+-npm run calibrate               # rebuild vol-table.json from Binance XLMUSDT history
++npm test && npm run typecheck   # pricer
++npm run calibrate -- XLM        # rebuild vol-tables/XLM.json from Coinbase history (also BTC, ETH)
+ 
+-../scripts/deploy.sh local      # or testnet: keys, tUSDC asset, vault, 10,000 tUSDC pool, writes .dev.vars
+-node scripts/e2e.ts             # drives the Worker API end to end against that deployment
+-npx wrangler dev                # demo at http://localhost:8787
++../scripts/deploy.sh local      # or testnet: keys, 2-of-2 admin, tUSDC, mock PerpDEX, vault, 10,000 tUSDC pool, writes .dev.vars
++node scripts/e2e.ts             # drives the Worker API and keeper end to end against that deployment
++npx wrangler dev --test-scheduled   # demo at http://localhost:8787; GET /__scheduled runs the keeper once
++../scripts/admin.sh testnet propose --change '{"Perpdex":["C...",false]}'   # admin calls need both signers
+ ```
+ 
+-`scripts/deploy.sh local` needs `stellar container start local --protocol-version 29` (Docker). Deploying the demo: copy `VAULT_ID` and `ASSET_ISSUER` from the deploy output into `pricer/wrangler.jsonc`, then `npx wrangler secret put PRICER_SECRET`, `npx wrangler secret put FAUCET_SECRET`, `npx wrangler deploy`.
++`scripts/deploy.sh local` needs `stellar container start local --protocol-version 29` (Docker); local uses `contracts/mock-oracle`, testnet uses Reflector `CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63`. Deploying the demo: `npx wrangler kv namespace create KV` and put its id in `pricer/wrangler.jsonc`, copy `VAULT_ID`, `PERPDEX_ID` and `ASSET_ISSUER` from the deploy output, `npx wrangler secret put` for `PRICER_SECRET`, `FAUCET_SECRET` and `KEEPER_SECRET`, then `npx wrangler deploy`.
+ 
+ ## Where this differs from the spec
+ 
+ - **Signature** covers the quote's canonical XDR (the contract re-serializes the struct it decoded), not `sha256(Quote)`. Ed25519 hashes internally; re-serializing means extra or missing map keys can't change what was signed.
+-- **Quote carries `vault`**, so a quote signed for one deployment can't be replayed on another that shares the pricer key. `perpdex` / `position_id` arrive with position binding in Instaward 3.
+-- **`release`** frees a reservation with no payout. It is the stand-in for settlement until Instaward 2; callable by the admin or the protection's owner.
+-- **Withdrawals**: `withdraw_request` is limited to free capital and one request at a time, so `reserved ≤ capital − locked` holds at every step; `withdraw_execute` pays out after 7 days.
+-- **Concentration loading** is 1.0 until per-(asset, direction) reserves are tracked on-chain (Instaward 3). Utilization loading and the 5% margin apply.
+-- **Prices** use 7 decimals. Reflector uses 14; the Instaward 2 oracle adapter must rescale.
++- **Quote carries `vault`**, so a quote signed for one deployment can't be replayed on another that shares the pricer key.
++- **One core contract.** Vault, book, quote check, oracle reads and governance live in one contract; the PerpDEX implements the position interface directly (`contracts/mock-perpdex` is the reference).
++- **Settlement TWAP** is rebuilt record by record with SEP-40 `price(asset, timestamp)`, so a late keeper still settles on the exact window while the oracle keeps history (about 18 hours on Reflector testnet).
++- **Position closed before activation** settles with zero payout; **position reduced below the protected quantity** settles the whole contract at the oracle price.
++- **Liquidity cap** is enforced by the pricer on max-payout exposure, not on-chain.
++- **Withdrawals**: `withdraw_request` is limited to free capital and one request at a time, so `reserved ≤ capital − locked` holds at every step; both are owner-only and `withdraw_execute` pays the owner (the PerpDEX) after 7 days.
++- **Prices** use 7 decimals everywhere in the contract; oracle prices are rescaled in one place (`oracle::to_7`).
+ - **Test token** is `tUSDC`, a classic asset issued by the deploy script, with a faucet in the demo.
+diff --git a/contracts/mock-oracle/Cargo.toml b/contracts/mock-oracle/Cargo.toml
+new file mode 100644
+index 0000000..ca3bf75
+--- /dev/null
++++ b/contracts/mock-oracle/Cargo.toml
+@@ -0,0 +1,15 @@
++[package]
++name = "tosbi-mock-oracle"
++version = "0.1.0"
++edition = "2021"
++publish = false
++
++[lib]
++crate-type = ["cdylib", "rlib"]
++doctest = false
++
++[dependencies]
++soroban-sdk = { workspace = true }
++
++[dev-dependencies]
++soroban-sdk = { workspace = true, features = ["testutils"] }
+diff --git a/contracts/mock-oracle/src/lib.rs b/contracts/mock-oracle/src/lib.rs
+new file mode 100644
+index 0000000..2253fbe
+--- /dev/null
++++ b/contracts/mock-oracle/src/lib.rs
+@@ -0,0 +1,73 @@
++//! SEP-40 oracle stand-in for tests and the local network: 14 decimals, 5-minute records, and
++//! `price` returns the record at the 5-minute boundary at or before `timestamp`. Anyone may set prices.
++#![no_std]
++
++use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol};
++
++const RESOLUTION: u64 = 300;
++
++#[contracttype]
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub enum Asset {
++    Stellar(Address),
++    Other(Symbol),
++}
++
++#[contracttype]
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct PriceData {
++    pub price: i128,
++    pub timestamp: u64,
++}
++
++#[contracttype]
++enum Key {
++    Price(Symbol, u64),
++    Last(Symbol),
++}
++
++#[contract]
++pub struct MockOracle;
++
++#[contractimpl]
++impl MockOracle {
++    pub fn decimals(_env: Env) -> u32 {
++        14
++    }
++
++    pub fn resolution(_env: Env) -> u32 {
++        RESOLUTION as u32
++    }
++
++    /// Sets the record covering `timestamp`; `price` has 14 decimals.
++    pub fn set(env: Env, asset: Symbol, timestamp: u64, price: i128) {
++        let ts = timestamp / RESOLUTION * RESOLUTION;
++        let s = env.storage().persistent();
++        s.set(&Key::Price(asset.clone(), ts), &price);
++        if ts >= s.get(&Key::Last(asset.clone())).unwrap_or(0) {
++            s.set(&Key::Last(asset), &ts);
++        }
++    }
++
++    pub fn price(env: Env, asset: Asset, timestamp: u64) -> Option<PriceData> {
++        let Asset::Other(sym) = asset else {
++            return None;
++        };
++        let ts = timestamp / RESOLUTION * RESOLUTION;
++        env.storage()
++            .persistent()
++            .get(&Key::Price(sym, ts))
++            .map(|price| PriceData {
++                price,
++                timestamp: ts,
++            })
++    }
++
++    pub fn lastprice(env: Env, asset: Asset) -> Option<PriceData> {
++        let Asset::Other(sym) = asset.clone() else {
++            return None;
++        };
++        let ts: u64 = env.storage().persistent().get(&Key::Last(sym))?;
++        Self::price(env, asset, ts)
++    }
++}
+diff --git a/contracts/mock-perpdex/Cargo.toml b/contracts/mock-perpdex/Cargo.toml
+new file mode 100644
+index 0000000..a187459
+--- /dev/null
++++ b/contracts/mock-perpdex/Cargo.toml
+@@ -0,0 +1,15 @@
++[package]
++name = "tosbi-mock-perpdex"
++version = "0.1.0"
++edition = "2021"
++publish = false
++
++[lib]
++crate-type = ["cdylib", "rlib"]
++doctest = false
++
++[dependencies]
++soroban-sdk = { workspace = true }
++
++[dev-dependencies]
++soroban-sdk = { workspace = true, features = ["testutils"] }
+diff --git a/contracts/mock-perpdex/src/lib.rs b/contracts/mock-perpdex/src/lib.rs
+new file mode 100644
+index 0000000..08d9a8d
+--- /dev/null
++++ b/contracts/mock-perpdex/src/lib.rs
+@@ -0,0 +1,187 @@
++//! Reference PerpDEX Position Contract implementing the TOSBI position interface (spec §7.6 + `open_ts`).
++//! Testnet and test fixture only: marks come from a SEP-40 oracle, and the owner may close at any price
++//! so the demo can show the vault rejecting an outlier close.
++#![no_std]
++
++use soroban_sdk::{
++    contract, contractclient, contractevent, contractimpl, contracttype, Address, BytesN, Env,
++    Symbol,
++};
++
++#[contracttype]
++#[derive(Copy, Clone, Debug, Eq, PartialEq)]
++#[repr(u32)]
++pub enum Direction {
++    Long = 0,
++    Short = 1,
++}
++
++#[contracttype]
++#[derive(Copy, Clone, Debug, Eq, PartialEq)]
++#[repr(u32)]
++pub enum PositionStatus {
++    Open = 0,
++    Closed = 1,
++    Liquidated = 2,
++}
++
++/// Prices are USDC per unit with 7 decimals; `size` is asset units with 7 decimals.
++#[contracttype]
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct Position {
++    pub owner: Address,
++    pub asset: Symbol,
++    pub direction: Direction,
++    pub size: i128,
++    pub entry_price: i128,
++    pub mark_price: i128,
++    pub status: PositionStatus,
++    pub open_ts: u64,
++    pub close_price: Option<i128>,
++    pub close_ts: Option<u64>,
++}
++
++#[contracttype]
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub enum Asset {
++    Stellar(Address),
++    Other(Symbol),
++}
++
++#[contracttype]
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct PriceData {
++    pub price: i128,
++    pub timestamp: u64,
++}
++
++#[allow(dead_code)]
++#[contractclient(name = "OracleClient")]
++pub trait Sep40 {
++    fn decimals(env: Env) -> u32;
++    fn lastprice(env: Env, asset: Asset) -> Option<PriceData>;
++}
++
++#[contractevent]
++pub struct PositionClosed {
++    #[topic]
++    pub position_id: BytesN<32>,
++    pub close_price: i128,
++    pub close_ts: u64,
++    pub status: PositionStatus,
++}
++
++#[contracttype]
++enum Key {
++    Oracle,
++    Next,
++    Pos(BytesN<32>),
++}
++
++#[contract]
++pub struct MockPerpdex;
++
++#[contractimpl]
++impl MockPerpdex {
++    pub fn __constructor(env: Env, oracle: Address) {
++        env.storage().instance().set(&Key::Oracle, &oracle);
++        env.storage().instance().set(&Key::Next, &0u64);
++    }
++
++    pub fn open(
++        env: Env,
++        owner: Address,
++        asset: Symbol,
++        direction: Direction,
++        size: i128,
++    ) -> BytesN<32> {
++        owner.require_auth();
++        assert!(size > 0, "size must be positive");
++        let n: u64 = env.storage().instance().get(&Key::Next).unwrap();
++        env.storage().instance().set(&Key::Next, &(n + 1));
++        let mut raw = [0u8; 32];
++        raw[24..].copy_from_slice(&n.to_be_bytes());
++        let id = BytesN::from_array(&env, &raw);
++        let mark = mark(&env, &asset);
++        let pos = Position {
++            owner,
++            asset,
++            direction,
++            size,
++            entry_price: mark,
++            mark_price: mark,
++            status: PositionStatus::Open,
++            open_ts: env.ledger().timestamp(),
++            close_price: None,
++            close_ts: None,
++        };
++        env.storage().persistent().set(&Key::Pos(id.clone()), &pos);
++        id
++    }
++
++    pub fn get_position(env: Env, position_id: BytesN<32>) -> Position {
++        let mut pos = load(&env, &position_id);
++        if pos.status == PositionStatus::Open {
++            pos.mark_price = mark(&env, &pos.asset);
++        }
++        pos
++    }
++
++    /// Closes at `price`, or at the oracle mark when `price` is None.
++    pub fn close(env: Env, position_id: BytesN<32>, price: Option<i128>) {
++        end(&env, position_id, price, PositionStatus::Closed);
++    }
++
++    pub fn liquidate(env: Env, position_id: BytesN<32>, price: Option<i128>) {
++        end(&env, position_id, price, PositionStatus::Liquidated);
++    }
++
++    /// Partial close: shrinks the open position to `size`.
++    pub fn reduce(env: Env, position_id: BytesN<32>, size: i128) {
++        let mut pos = load(&env, &position_id);
++        pos.owner.require_auth();
++        assert!(
++            pos.status == PositionStatus::Open && size > 0 && size < pos.size,
++            "bad reduce"
++        );
++        pos.size = size;
++        env.storage().persistent().set(&Key::Pos(position_id), &pos);
++    }
++}
++
++fn load(env: &Env, id: &BytesN<32>) -> Position {
++    env.storage()
++        .persistent()
++        .get(&Key::Pos(id.clone()))
++        .expect("no such position")
++}
++
++fn end(env: &Env, id: BytesN<32>, price: Option<i128>, status: PositionStatus) {
++    let mut pos = load(env, &id);
++    pos.owner.require_auth();
++    assert!(pos.status == PositionStatus::Open, "position not open");
++    let close_price = price.unwrap_or_else(|| mark(env, &pos.asset));
++    let close_ts = env.ledger().timestamp();
++    pos.status = status;
++    pos.close_price = Some(close_price);
++    pos.close_ts = Some(close_ts);
++    env.storage().persistent().set(&Key::Pos(id.clone()), &pos);
++    PositionClosed {
++        position_id: id,
++        close_price,
++        close_ts,
++        status,
++    }
++    .publish(env);
++}
++
++fn mark(env: &Env, asset: &Symbol) -> i128 {
++    let oracle: Address = env.storage().instance().get(&Key::Oracle).unwrap();
++    let c = OracleClient::new(env, &oracle);
++    let decimals = c.decimals();
++    let p = c
++        .lastprice(&Asset::Other(asset.clone()))
++        .expect("no oracle price")
++        .price;
++    p / 10i128.pow(decimals - 7)
++}
+diff --git a/contracts/protection/Cargo.toml b/contracts/protection/Cargo.toml
+index 766530b..2afea9f 100644
+--- a/contracts/protection/Cargo.toml
++++ b/contracts/protection/Cargo.toml
+@@ -14,3 +14,5 @@ soroban-sdk = { workspace = true }
+ [dev-dependencies]
+ soroban-sdk = { workspace = true, features = ["testutils"] }
+ ed25519-dalek = "2"
++tosbi-mock-oracle = { path = "../mock-oracle" }
++tosbi-mock-perpdex = { path = "../mock-perpdex" }
+diff --git a/contracts/protection/src/governance.rs b/contracts/protection/src/governance.rs
+new file mode 100644
+index 0000000..0fe8f90
+--- /dev/null
++++ b/contracts/protection/src/governance.rs
+@@ -0,0 +1,151 @@
++//! Roles, pause and timelocked changes (spec §7.9). `admin` is a Stellar multisig account holding
++//! TOSBI and PerpDEX signers; its signature thresholds are enforced by the network, not here.
++
++use soroban_sdk::{
++    contractevent, contractimpl, contracttype, Address, BytesN, ContractExecutable, Env, Symbol,
++};
++
++use crate::{
++    config, flag, set_persistent, Error, Key, Params, ProtectionContract, ProtectionContractArgs,
++    ProtectionContractClient,
++};
++
++#[contracttype]
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub enum Change {
++    Params(Params),
++    Pricer(BytesN<32>),
++    Oracle(Address),
++    Treasury(Address),
++    Asset(Symbol, bool),
++    Perpdex(Address, bool),
++    Upgrade(BytesN<32>),
++}
++
++#[contracttype]
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct PendingChange {
++    pub change: Change,
++    pub eta: u64,
++}
++
++#[contractevent]
++pub struct ChangeProposed {
++    #[topic]
++    pub id: u64,
++    pub eta: u64,
++}
++
++#[contractevent]
++pub struct ChangeExecuted {
++    #[topic]
++    pub id: u64,
++}
++
++#[contractevent]
++pub struct ChangeCancelled {
++    #[topic]
++    pub id: u64,
++}
++
++#[contractevent]
++pub struct PauseSet {
++    pub paused: bool,
++}
++
++#[contractevent]
++pub struct VolHashSet {
++    pub hash: BytesN<32>,
++}
++
++#[contractimpl]
++impl ProtectionContract {
++    pub fn propose(env: Env, change: Change) -> u64 {
++        let cfg = config(&env);
++        cfg.admin.require_auth();
++        let id: u64 = env.storage().instance().get(&Key::NextChange).unwrap_or(0);
++        env.storage().instance().set(&Key::NextChange, &(id + 1));
++        let eta = env.ledger().timestamp() + cfg.params.timelock;
++        set_persistent(&env, &Key::Change(id), &PendingChange { change, eta });
++        ChangeProposed { id, eta }.publish(&env);
++        id
++    }
++
++    pub fn execute(env: Env, id: u64) -> Result<(), Error> {
++        let mut cfg = config(&env);
++        cfg.admin.require_auth();
++        let key = Key::Change(id);
++        let pending: PendingChange = env
++            .storage()
++            .persistent()
++            .get(&key)
++            .ok_or(Error::NoChange)?;
++        if env.ledger().timestamp() < pending.eta {
++            return Err(Error::Timelocked);
++        }
++        env.storage().persistent().remove(&key);
++        let s = env.storage().instance();
++        match pending.change {
++            Change::Params(p) => cfg.params = p,
++            Change::Pricer(k) => cfg.pricer = k,
++            Change::Oracle(a) => cfg.oracle = a,
++            Change::Treasury(a) => cfg.treasury = a,
++            Change::Asset(a, on) => s.set(&Key::Asset(a), &on),
++            Change::Perpdex(a, on) => s.set(&Key::Perpdex(a), &on),
++            Change::Upgrade(hash) => env
++                .deployer()
++                .update_current_contract(ContractExecutable::Wasm(hash)),
++        }
++        s.set(&Key::Config, &cfg);
++        ChangeExecuted { id }.publish(&env);
++        Ok(())
++    }
++
++    pub fn cancel(env: Env, id: u64) -> Result<(), Error> {
++        config(&env).admin.require_auth();
++        let key = Key::Change(id);
++        if !env.storage().persistent().has(&key) {
++            return Err(Error::NoChange);
++        }
++        env.storage().persistent().remove(&key);
++        ChangeCancelled { id }.publish(&env);
++        Ok(())
++    }
++
++    /// Stops new sales. Settlement and withdrawals keep working.
++    pub fn pause(env: Env, caller: Address) -> Result<(), Error> {
++        caller.require_auth();
++        let cfg = config(&env);
++        if caller != cfg.owner && caller != cfg.operator {
++            return Err(Error::Unauthorized);
++        }
++        set_paused(&env, true);
++        Ok(())
++    }
++
++    pub fn unpause(env: Env) {
++        config(&env).admin.require_auth();
++        set_paused(&env, false);
++    }
++
++    pub fn set_vol_hash(env: Env, hash: BytesN<32>) {
++        config(&env).operator.require_auth();
++        env.storage().instance().set(&Key::VolHash, &hash);
++        VolHashSet { hash }.publish(&env);
++    }
++
++    pub fn pending_change(env: Env, id: u64) -> Option<PendingChange> {
++        env.storage().persistent().get(&Key::Change(id))
++    }
++
++    pub fn vol_hash(env: Env) -> Option<BytesN<32>> {
++        env.storage().instance().get(&Key::VolHash)
++    }
++}
++
++fn set_paused(env: &Env, paused: bool) {
++    if flag(env, &Key::Paused) != paused {
++        env.storage().instance().set(&Key::Paused, &paused);
++        PauseSet { paused }.publish(env);
++    }
++}
+diff --git a/contracts/protection/src/lib.rs b/contracts/protection/src/lib.rs
+index cb7a448..b661137 100644
+--- a/contracts/protection/src/lib.rs
++++ b/contracts/protection/src/lib.rs
+@@ -1,14 +1,24 @@
+ #![no_std]
+ 
++mod governance;
++mod oracle;
++mod position;
++
++pub use governance::{Change, PendingChange};
++pub use position::{Position, PositionStatus};
++
+ use soroban_sdk::{
+     contract, contracterror, contractevent, contractimpl, contracttype, token, xdr::ToXdr, Address,
+-    BytesN, Env, Symbol,
++    BytesN, Env, Symbol, Vec,
+ };
+ 
+ const DAY_IN_LEDGERS: u32 = 17_280;
+ const TTL_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
+ const TTL_EXTEND_TO: u32 = 30 * DAY_IN_LEDGERS;
+ const BPS: i128 = 10_000;
++const UNIT: i128 = 10_000_000;
++const MIN_WINDOW: u64 = 300;
++const MAX_WINDOW: u64 = 1_800;
+ 
+ #[contracterror]
+ #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+@@ -23,11 +33,25 @@ pub enum Error {
+     InsufficientCapital = 7,
+     WalletCapExceeded = 8,
+     NotFound = 9,
+-    AlreadyReleased = 10,
++    AlreadySettled = 10,
+     WithdrawalPending = 11,
+     NoWithdrawal = 12,
+     WithdrawalLocked = 13,
+     PaymentFailed = 14,
++    Paused = 15,
++    AssetDisabled = 16,
++    PerpdexNotAllowed = 17,
++    PositionMismatch = 18,
++    MarkMoved = 19,
++    PositionTooNew = 20,
++    AlreadyCovered = 21,
++    UtilizationCap = 22,
++    ConcentrationCap = 23,
++    NotExpired = 24,
++    NotClosed = 25,
++    OracleStale = 26,
++    Timelocked = 27,
++    NoChange = 28,
+ }
+ 
+ #[contracttype]
+@@ -38,12 +62,21 @@ pub enum Direction {
+     Short = 1,
+ }
+ 
++impl Direction {
++    fn opposite(self) -> Self {
++        match self {
++            Direction::Long => Direction::Short,
++            Direction::Short => Direction::Long,
++        }
++    }
++}
++
+ #[contracttype]
+ #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+ #[repr(u32)]
+ pub enum Status {
+     Active = 0,
+-    Released = 1,
++    Settled = 1,
+ }
+ 
+ #[contracttype]
+@@ -55,15 +88,29 @@ pub struct Params {
+     pub wallet_cap_max: i128,
+     pub activation_delay: u64,
+     pub withdraw_delay: u64,
++    pub util_cap_bps: u32,
++    pub side_cap_bps: u32,
++    pub asset_cap_bps: u32,
++    pub mark_tol_bps: u32,
++    pub close_tol_bps: u32,
++    pub min_position_age: u64,
++    pub record_cap_bps: u32,
++    pub stale_max: u64,
++    pub big_payout: i128,
++    pub share_pdx_bps: u32,
++    pub timelock: u64,
+ }
+ 
+ #[contracttype]
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ pub struct Config {
+     pub admin: Address,
++    pub owner: Address,
++    pub operator: Address,
+     pub token: Address,
+     pub treasury: Address,
+     pub pricer: BytesN<32>,
++    pub oracle: Address,
+     pub params: Params,
+ }
+ 
+@@ -72,6 +119,8 @@ pub struct Config {
+ #[derive(Clone, Debug, Eq, PartialEq)]
+ pub struct Quote {
+     pub vault: Address,
++    pub perpdex: Address,
++    pub position_id: BytesN<32>,
+     pub trader: Address,
+     pub asset: Symbol,
+     pub direction: Direction,
+@@ -94,6 +143,8 @@ pub struct Quote {
+ pub struct Protection {
+     pub id: u64,
+     pub trader: Address,
++    pub perpdex: Address,
++    pub position_id: BytesN<32>,
+     pub asset: Symbol,
+     pub direction: Direction,
+     pub qty: i128,
+@@ -105,7 +156,10 @@ pub struct Protection {
+     pub t_mint: u64,
+     pub t_active: u64,
+     pub t_expire: u64,
++    pub window: u64,
+     pub status: Status,
++    pub settle_price: i128,
++    pub payout: i128,
+ }
+ 
+ #[contracttype]
+@@ -115,7 +169,7 @@ pub struct Withdrawal {
+     pub unlock_at: u64,
+ }
+ 
+-/// `capital` is pool money (deposits + premiums − withdrawals); `locked` is queued for withdrawal.
++/// `capital` is pool money (deposits + premiums − payouts − withdrawals); `locked` is queued for withdrawal.
+ /// Invariant: reserved ≤ capital − locked.
+ #[contracttype]
+ #[derive(Clone, Debug, Default, Eq, PartialEq)]
+@@ -139,10 +193,18 @@ enum Key {
+     Config,
+     Vault,
+     NextId,
++    NextChange,
+     Withdrawal,
++    Paused,
++    VolHash,
++    Asset(Symbol),
++    Perpdex(Address),
++    Exposure(Symbol, Direction),
+     Protection(u64),
++    Covered(Address, BytesN<32>),
+     WalletReserved(Address),
+     Nonce(u64),
++    Change(u64),
+ }
+ 
+ #[contractevent]
+@@ -164,10 +226,13 @@ pub struct Minted {
+ }
+ 
+ #[contractevent]
+-pub struct Released {
++pub struct Settled {
+     #[topic]
+     pub id: u64,
+-    pub max_payout: i128,
++    pub price: i128,
++    pub payout: i128,
++    pub early: bool,
++    pub degraded: bool,
+ }
+ 
+ #[contractevent]
+@@ -186,27 +251,17 @@ pub struct ProtectionContract;
+ 
+ #[contractimpl]
+ impl ProtectionContract {
+-    pub fn __constructor(
+-        env: Env,
+-        admin: Address,
+-        token: Address,
+-        treasury: Address,
+-        pricer: BytesN<32>,
+-        params: Params,
+-    ) {
++    pub fn __constructor(env: Env, config: Config, assets: Vec<Symbol>, perpdexes: Vec<Address>) {
+         let s = env.storage().instance();
+-        s.set(
+-            &Key::Config,
+-            &Config {
+-                admin,
+-                token,
+-                treasury,
+-                pricer,
+-                params,
+-            },
+-        );
++        s.set(&Key::Config, &config);
+         s.set(&Key::Vault, &Vault::default());
+         s.set(&Key::NextId, &0u64);
++        for a in assets.iter() {
++            s.set(&Key::Asset(a), &true);
++        }
++        for d in perpdexes.iter() {
++            s.set(&Key::Perpdex(d), &true);
++        }
+     }
+ 
+     pub fn deposit_capital(env: Env, from: Address, amount: i128) -> Result<(), Error> {
+@@ -236,51 +291,34 @@ impl ProtectionContract {
+             .ed25519_verify(&cfg.pricer, &quote.clone().to_xdr(&env), &sig);
+ 
+         let now = env.ledger().timestamp();
+-        if now > quote.expires_at {
+-            return Err(Error::QuoteExpired);
+-        }
+-        if quote.vault != env.current_contract_address()
+-            || quote.premium <= 0
+-            || quote.fee < 0
+-            || quote.max_payout <= 0
+-            || quote.max_payout > quote.amount
+-            || quote.duration == 0
+-        {
+-            return Err(Error::InvalidQuote);
+-        }
++        check_quote(&env, &cfg.params, &quote, now)?;
+         let nonce_key = Key::Nonce(quote.nonce);
+         if env.storage().persistent().has(&nonce_key) {
+             return Err(Error::NonceUsed);
+         }
+-        let p = &cfg.params;
+-        if quote.amount < p.a_min || quote.amount > p.a_max {
+-            return Err(Error::AmountOutOfRange);
+-        }
+-
+-        let mut v = vault(&env);
+-        v.capital += quote.premium;
+-        let available = v.capital - v.locked;
+-        v.reserved += quote.max_payout;
+-        if v.reserved > available {
+-            return Err(Error::InsufficientCapital);
+-        }
+-        let wallet = wallet_reserved(&env, &quote.trader) + quote.max_payout;
+-        let wallet_cap = (available * p.wallet_cap_bps as i128 / BPS).min(p.wallet_cap_max);
+-        if wallet > wallet_cap {
+-            return Err(Error::WalletCapExceeded);
++        let covered = Key::Covered(quote.perpdex.clone(), quote.position_id.clone());
++        if env.storage().persistent().has(&covered) {
++            return Err(Error::AlreadyCovered);
+         }
++        let (v, side, wallet) = check_capacity(&env, &cfg.params, &quote)?;
++        // Last: the only check that calls another contract.
++        check_position(&env, &cfg.params, &quote, now)?;
+ 
+         set_vault(&env, &v);
++        set_exposure(&env, &quote.asset, quote.direction, side);
+         set_persistent(&env, &nonce_key, &true);
+         set_persistent(&env, &Key::WalletReserved(quote.trader.clone()), &wallet);
+         let id = next_id(&env);
++        set_persistent(&env, &covered, &id);
+         set_persistent(
+             &env,
+             &Key::Protection(id),
+             &Protection {
+                 id,
+                 trader: quote.trader.clone(),
+-                asset: quote.asset,
++                perpdex: quote.perpdex.clone(),
++                position_id: quote.position_id.clone(),
++                asset: quote.asset.clone(),
+                 direction: quote.direction,
+                 qty: quote.qty,
+                 p_start: quote.p_start,
+@@ -289,21 +327,29 @@ impl ProtectionContract {
+                 premium: quote.premium,
+                 fee: quote.fee,
+                 t_mint: now,
+-                t_active: now + p.activation_delay,
++                t_active: now + cfg.params.activation_delay,
+                 t_expire: now + quote.duration,
++                window: window_for(quote.duration, quote.max_payout, &cfg.params),
+                 status: Status::Active,
++                settle_price: 0,
++                payout: 0,
+             },
+         );
+ 
+-        pay(
+-            &env,
+-            &cfg.token,
+-            &quote.trader,
+-            &env.current_contract_address(),
+-            quote.premium,
+-        )?;
+-        if quote.fee > 0 {
+-            pay(&env, &cfg.token, &quote.trader, &cfg.treasury, quote.fee)?;
++        let me = env.current_contract_address();
++        pay(&env, &cfg.token, &quote.trader, &me, quote.premium)?;
++        let to_pdx = quote.fee * cfg.params.share_pdx_bps as i128 / BPS;
++        if to_pdx > 0 {
++            pay(&env, &cfg.token, &quote.trader, &cfg.owner, to_pdx)?;
++        }
++        if quote.fee > to_pdx {
++            pay(
++                &env,
++                &cfg.token,
++                &quote.trader,
++                &cfg.treasury,
++                quote.fee - to_pdx,
++            )?;
+         }
+         Minted {
+             id,
+@@ -316,45 +362,71 @@ impl ProtectionContract {
+         Ok(id)
+     }
+ 
+-    /// Frees a live reservation with no payout. Stand-in until settlement (Instaward 2) replaces it.
+-    pub fn release(env: Env, caller: Address, id: u64) -> Result<(), Error> {
+-        caller.require_auth();
++    /// Settles at expiry on the oracle TWAP. Anyone may call.
++    pub fn settle(env: Env, id: u64) -> Result<i128, Error> {
+         let cfg = config(&env);
+-        let key = Key::Protection(id);
+-        let mut p: Protection = env
+-            .storage()
+-            .persistent()
+-            .get(&key)
+-            .ok_or(Error::NotFound)?;
+-        if caller != cfg.admin && caller != p.trader {
+-            return Err(Error::Unauthorized);
+-        }
+-        if p.status == Status::Released {
+-            return Err(Error::AlreadyReleased);
++        let mut p = active(&env, id)?;
++        let now = env.ledger().timestamp();
++        if now < p.t_expire {
++            return Err(Error::NotExpired);
+         }
+-        p.status = Status::Released;
+-        set_persistent(&env, &key, &p);
+-
+-        let mut v = vault(&env);
+-        v.reserved -= p.max_payout;
+-        set_vault(&env, &v);
+-        let wallet_key = Key::WalletReserved(p.trader.clone());
+-        set_persistent(
++        let twap = oracle::twap(
+             &env,
+-            &wallet_key,
+-            &(wallet_reserved(&env, &p.trader) - p.max_payout),
++            &cfg.oracle,
++            &cfg.params,
++            &p.asset,
++            p.t_expire,
++            p.window,
+         );
+-        Released {
+-            id,
+-            max_payout: p.max_payout,
++        let (price, degraded) = match twap {
++            Some(px) => (px, false),
++            None if now < p.t_expire + cfg.params.stale_max => return Err(Error::OracleStale),
++            None => (
++                oracle::last(&env, &cfg.oracle, &p.asset).ok_or(Error::OracleStale)?,
++                true,
++            ),
++        };
++        finish(&env, &cfg, &mut p, price, false, degraded)
++    }
++
++    /// Settles before expiry when the position was closed, liquidated, or reduced below the
++    /// protected quantity. Anyone may call; the contract reads the position itself.
++    pub fn settle_early(env: Env, id: u64) -> Result<i128, Error> {
++        let cfg = config(&env);
++        let mut p = active(&env, id)?;
++        let pos = position::get(&env, &p.perpdex, &p.position_id).ok_or(Error::NotClosed)?;
++        let now = env.ledger().timestamp();
++        let reduced = pos.status == PositionStatus::Open && pos.size < p.qty;
++        if pos.status == PositionStatus::Open && !reduced {
++            return Err(Error::NotClosed);
+         }
+-        .publish(&env);
+-        Ok(())
++        let ts = if reduced {
++            now
++        } else {
++            pos.close_ts.unwrap_or(now)
++        };
++        if ts >= p.t_expire {
++            return Self::settle(env, id);
++        }
++        if ts < p.t_active {
++            // Never became active: settling at the start price pays nothing.
++            let start = p.p_start;
++            return finish(&env, &cfg, &mut p, start, true, false);
++        }
++        let reference = oracle::price_at(&env, &cfg.oracle, &p.asset, ts)
++            .or_else(|| oracle::last(&env, &cfg.oracle, &p.asset))
++            .ok_or(Error::OracleStale)?;
++        let tol = cfg.params.close_tol_bps as i128;
++        let price = match pos.close_price {
++            Some(c) if !reduced && (c - reference).abs() * BPS <= reference * tol => c,
++            _ => reference,
++        };
++        finish(&env, &cfg, &mut p, price, true, false)
+     }
+ 
+     pub fn withdraw_request(env: Env, amount: i128) -> Result<u64, Error> {
+         let cfg = config(&env);
+-        cfg.admin.require_auth();
++        cfg.owner.require_auth();
+         if amount <= 0 {
+             return Err(Error::InvalidAmount);
+         }
+@@ -377,7 +449,7 @@ impl ProtectionContract {
+ 
+     pub fn withdraw_execute(env: Env) -> Result<i128, Error> {
+         let cfg = config(&env);
+-        cfg.admin.require_auth();
++        cfg.owner.require_auth();
+         let w: Withdrawal = env
+             .storage()
+             .instance()
+@@ -393,7 +465,7 @@ impl ProtectionContract {
+         env.storage().instance().remove(&Key::Withdrawal);
+         token::Client::new(&env, &cfg.token).transfer(
+             &env.current_contract_address(),
+-            &cfg.admin,
++            &cfg.owner,
+             &w.amount,
+         );
+         WithdrawalExecuted { amount: w.amount }.publish(&env);
+@@ -425,6 +497,175 @@ impl ProtectionContract {
+     pub fn wallet_reserved(env: Env, trader: Address) -> i128 {
+         wallet_reserved(&env, &trader)
+     }
++
++    pub fn exposure(env: Env, asset: Symbol, direction: Direction) -> i128 {
++        exposure(&env, &asset, direction)
++    }
++
++    /// Ids run from 0 to next_id − 1.
++    pub fn next_id(env: Env) -> u64 {
++        env.storage().instance().get(&Key::NextId).unwrap()
++    }
++
++    pub fn paused(env: Env) -> bool {
++        flag(&env, &Key::Paused)
++    }
++}
++
++fn check_quote(env: &Env, p: &Params, q: &Quote, now: u64) -> Result<(), Error> {
++    if flag(env, &Key::Paused) {
++        return Err(Error::Paused);
++    }
++    if now > q.expires_at {
++        return Err(Error::QuoteExpired);
++    }
++    if q.vault != env.current_contract_address()
++        || q.premium <= 0
++        || q.fee < 0
++        || q.max_payout <= 0
++        || q.max_payout > q.amount
++        || q.duration == 0
++        || q.qty <= 0
++        || q.p_start <= 0
++    {
++        return Err(Error::InvalidQuote);
++    }
++    if q.amount < p.a_min || q.amount > p.a_max {
++        return Err(Error::AmountOutOfRange);
++    }
++    if !flag(env, &Key::Asset(q.asset.clone())) {
++        return Err(Error::AssetDisabled);
++    }
++    Ok(())
++}
++
++fn check_position(env: &Env, p: &Params, q: &Quote, now: u64) -> Result<(), Error> {
++    if !flag(env, &Key::Perpdex(q.perpdex.clone())) {
++        return Err(Error::PerpdexNotAllowed);
++    }
++    let pos = position::get(env, &q.perpdex, &q.position_id).ok_or(Error::PositionMismatch)?;
++    if pos.status != PositionStatus::Open
++        || pos.owner != q.trader
++        || pos.asset != q.asset
++        || pos.direction != q.direction
++        || pos.size < q.qty
++    {
++        return Err(Error::PositionMismatch);
++    }
++    if (pos.mark_price - q.p_start).abs() * BPS > q.p_start * p.mark_tol_bps as i128 {
++        return Err(Error::MarkMoved);
++    }
++    if now < pos.open_ts + p.min_position_age {
++        return Err(Error::PositionTooNew);
++    }
++    Ok(())
++}
++
++/// Returns the vault, the (asset, direction) exposure and the wallet reserve after this sale.
++fn check_capacity(env: &Env, p: &Params, q: &Quote) -> Result<(Vault, i128, i128), Error> {
++    let mut v = vault(env);
++    v.capital += q.premium;
++    v.reserved += q.max_payout;
++    let available = v.capital - v.locked;
++    if v.reserved > available {
++        return Err(Error::InsufficientCapital);
++    }
++    if v.reserved > share(available, p.util_cap_bps) {
++        return Err(Error::UtilizationCap);
++    }
++    let side = exposure(env, &q.asset, q.direction) + q.max_payout;
++    let both = side + exposure(env, &q.asset, q.direction.opposite());
++    if side > share(available, p.side_cap_bps) || both > share(available, p.asset_cap_bps) {
++        return Err(Error::ConcentrationCap);
++    }
++    let wallet = wallet_reserved(env, &q.trader) + q.max_payout;
++    if wallet > share(available, p.wallet_cap_bps).min(p.wallet_cap_max) {
++        return Err(Error::WalletCapExceeded);
++    }
++    Ok((v, side, wallet))
++}
++
++/// Settlement TWAP window, spec §5.1: clamp(5 min, 0.53·√(D in minutes) min, 30 min), and 30 min
++/// above the size override. 0.53·√(D/60)·60 s = √(16.853·D) s.
++pub fn window_for(duration: u64, max_payout: i128, p: &Params) -> u64 {
++    if max_payout > p.big_payout {
++        return MAX_WINDOW;
++    }
++    (duration * 16_853 / 1_000)
++        .isqrt()
++        .clamp(MIN_WINDOW, MAX_WINDOW)
++}
++
++/// Spec §2.3, rounded down so rounding favours the pool.
++fn payout_for(p: &Protection, price: i128) -> i128 {
++    let gap = match p.direction {
++        Direction::Long => p.p_start - price,
++        Direction::Short => price - p.p_start,
++    };
++    if gap <= 0 {
++        return 0;
++    }
++    (p.qty * gap / UNIT).min(p.max_payout)
++}
++
++fn finish(
++    env: &Env,
++    cfg: &Config,
++    p: &mut Protection,
++    price: i128,
++    early: bool,
++    degraded: bool,
++) -> Result<i128, Error> {
++    let payout = payout_for(p, price);
++    let mut v = vault(env);
++    v.capital -= payout;
++    v.reserved -= p.max_payout;
++    set_vault(env, &v);
++    let side = exposure(env, &p.asset, p.direction) - p.max_payout;
++    set_exposure(env, &p.asset, p.direction, side);
++    let wallet = wallet_reserved(env, &p.trader) - p.max_payout;
++    set_persistent(env, &Key::WalletReserved(p.trader.clone()), &wallet);
++    env.storage()
++        .persistent()
++        .remove(&Key::Covered(p.perpdex.clone(), p.position_id.clone()));
++    p.status = Status::Settled;
++    p.settle_price = price;
++    p.payout = payout;
++    set_persistent(env, &Key::Protection(p.id), p);
++    if payout > 0 {
++        pay(
++            env,
++            &cfg.token,
++            &env.current_contract_address(),
++            &p.trader,
++            payout,
++        )?;
++    }
++    Settled {
++        id: p.id,
++        price,
++        payout,
++        early,
++        degraded,
++    }
++    .publish(env);
++    Ok(payout)
++}
++
++fn active(env: &Env, id: u64) -> Result<Protection, Error> {
++    let p: Protection = env
++        .storage()
++        .persistent()
++        .get(&Key::Protection(id))
++        .ok_or(Error::NotFound)?;
++    if p.status == Status::Settled {
++        return Err(Error::AlreadySettled);
++    }
++    Ok(p)
++}
++
++fn share(amount: i128, bps: u32) -> i128 {
++    amount * bps as i128 / BPS
+ }
+ 
+ fn config(env: &Env) -> Config {
+@@ -434,6 +675,10 @@ fn config(env: &Env) -> Config {
+     env.storage().instance().get(&Key::Config).unwrap()
+ }
+ 
++fn flag(env: &Env, key: &Key) -> bool {
++    env.storage().instance().get(key).unwrap_or(false)
++}
++
+ fn vault(env: &Env) -> Vault {
+     env.storage().instance().get(&Key::Vault).unwrap()
+ }
+@@ -442,6 +687,19 @@ fn set_vault(env: &Env, v: &Vault) {
+     env.storage().instance().set(&Key::Vault, v);
+ }
+ 
++fn exposure(env: &Env, asset: &Symbol, direction: Direction) -> i128 {
++    env.storage()
++        .instance()
++        .get(&Key::Exposure(asset.clone(), direction))
++        .unwrap_or(0)
++}
++
++fn set_exposure(env: &Env, asset: &Symbol, direction: Direction, amount: i128) {
++    env.storage()
++        .instance()
++        .set(&Key::Exposure(asset.clone(), direction), &amount);
++}
++
+ fn next_id(env: &Env) -> u64 {
+     let id: u64 = env.storage().instance().get(&Key::NextId).unwrap();
+     env.storage().instance().set(&Key::NextId, &(id + 1));
+diff --git a/contracts/protection/src/oracle.rs b/contracts/protection/src/oracle.rs
+new file mode 100644
+index 0000000..696a3ac
+--- /dev/null
++++ b/contracts/protection/src/oracle.rs
+@@ -0,0 +1,96 @@
++//! SEP-40 oracle reads (Reflector). All prices leave this module as USDC per unit with 7 decimals.
++
++use soroban_sdk::{contractclient, contracttype, Address, Env, Symbol};
++
++use crate::{Params, BPS};
++
++#[contracttype]
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub enum Asset {
++    Stellar(Address),
++    Other(Symbol),
++}
++
++#[contracttype]
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct PriceData {
++    pub price: i128,
++    pub timestamp: u64,
++}
++
++#[allow(dead_code)]
++#[contractclient(name = "OracleClient")]
++pub trait Sep40 {
++    fn decimals(env: Env) -> u32;
++    fn resolution(env: Env) -> u32;
++    fn price(env: Env, asset: Asset, timestamp: u64) -> Option<PriceData>;
++    fn lastprice(env: Env, asset: Asset) -> Option<PriceData>;
++}
++
++/// The single place oracle decimals are converted.
++pub fn to_7(price: i128, decimals: u32) -> i128 {
++    if decimals >= 7 {
++        price / 10i128.pow(decimals - 7)
++    } else {
++        price * 10i128.pow(7 - decimals)
++    }
++}
++
++/// Average price over the `window` seconds ending at `end`, read record by record.
++/// A record more than `record_cap_bps` away from the last accepted one (starting from the record
++/// just before the window) is skipped. None when the record at the end of the window is missing:
++/// not published yet, or older than the oracle keeps.
++pub fn twap(
++    env: &Env,
++    oracle: &Address,
++    p: &Params,
++    asset: &Symbol,
++    end: u64,
++    window: u64,
++) -> Option<i128> {
++    let c = OracleClient::new(env, oracle);
++    let res = c.resolution() as u64;
++    let decimals = c.decimals();
++    let a = Asset::Other(asset.clone());
++    let at = |ts: u64| {
++        c.price(&a, &ts)
++            .filter(|r| r.timestamp == ts)
++            .map(|r| to_7(r.price, decimals))
++    };
++    let last = end / res * res;
++    let n = window.div_ceil(res).max(1);
++    at(last)?;
++    let mut prev = at(last.saturating_sub(n * res));
++    let (mut sum, mut count) = (0i128, 0i128);
++    for k in (0..n).rev() {
++        let Some(px) = at(last - k * res) else {
++            continue;
++        };
++        if let Some(pr) = prev {
++            if (px - pr).abs() * BPS > pr * p.record_cap_bps as i128 {
++                continue;
++            }
++        }
++        sum += px;
++        count += 1;
++        prev = Some(px);
++    }
++    if count == 0 {
++        None
++    } else {
++        Some(sum / count)
++    }
++}
++
++/// The record at or before `ts`.
++pub fn price_at(env: &Env, oracle: &Address, asset: &Symbol, ts: u64) -> Option<i128> {
++    let c = OracleClient::new(env, oracle);
++    c.price(&Asset::Other(asset.clone()), &ts)
++        .map(|r| to_7(r.price, c.decimals()))
++}
++
++pub fn last(env: &Env, oracle: &Address, asset: &Symbol) -> Option<i128> {
++    let c = OracleClient::new(env, oracle);
++    c.lastprice(&Asset::Other(asset.clone()))
++        .map(|r| to_7(r.price, c.decimals()))
++}
+diff --git a/contracts/protection/src/position.rs b/contracts/protection/src/position.rs
+new file mode 100644
+index 0000000..948d1cc
+--- /dev/null
++++ b/contracts/protection/src/position.rs
+@@ -0,0 +1,45 @@
++//! The PerpDEX Position Contract interface (spec §7.6 plus `open_ts`). Must stay byte-identical
++//! to `contracts/mock-perpdex`: same field names, same enum numbers.
++
++use soroban_sdk::{contractclient, contracttype, Address, BytesN, Env, Symbol};
++
++use crate::Direction;
++
++#[contracttype]
++#[derive(Copy, Clone, Debug, Eq, PartialEq)]
++#[repr(u32)]
++pub enum PositionStatus {
++    Open = 0,
++    Closed = 1,
++    Liquidated = 2,
++}
++
++/// Prices are USDC per unit with 7 decimals; `size` is asset units with 7 decimals.
++#[contracttype]
++#[derive(Clone, Debug, Eq, PartialEq)]
++pub struct Position {
++    pub owner: Address,
++    pub asset: Symbol,
++    pub direction: Direction,
++    pub size: i128,
++    pub entry_price: i128,
++    pub mark_price: i128,
++    pub status: PositionStatus,
++    pub open_ts: u64,
++    pub close_price: Option<i128>,
++    pub close_ts: Option<u64>,
++}
++
++#[allow(dead_code)]
++#[contractclient(name = "PerpdexClient")]
++pub trait Perpdex {
++    fn get_position(env: Env, position_id: BytesN<32>) -> Position;
++}
++
++/// None when the PerpDEX call fails (unknown id, contract error).
++pub fn get(env: &Env, perpdex: &Address, id: &BytesN<32>) -> Option<Position> {
++    match PerpdexClient::new(env, perpdex).try_get_position(id) {
++        Ok(Ok(p)) => Some(p),
++        _ => None,
++    }
++}
+diff --git a/contracts/protection/src/test.rs b/contracts/protection/src/test.rs
+index f58644d..6b830d3 100644
+--- a/contracts/protection/src/test.rs
++++ b/contracts/protection/src/test.rs
+@@ -1,25 +1,42 @@
+ extern crate std;
+ 
++mod binding;
++mod caps;
++mod early;
++mod governance;
++mod settle;
++
+ use super::*;
+ use ed25519_dalek::{Signer, SigningKey};
+ use soroban_sdk::{
+     symbol_short,
+-    testutils::{Address as _, Ledger},
++    testutils::{Address as _, Events as _, Ledger},
+     token::{StellarAssetClient, TokenClient},
+-    Address, BytesN, Env, IntoVal, Map, Symbol, TryFromVal, Val,
++    vec, Address, BytesN, Env, Event, IntoVal, Map, Symbol, TryFromVal, Val,
+ };
+ use std::{cell::Cell, vec::Vec};
++use tosbi_mock_oracle::{Asset, MockOracle, MockOracleClient};
++use tosbi_mock_perpdex::{MockPerpdex, MockPerpdexClient};
+ 
+ const USDC: i128 = 10_000_000;
+ const NOW: u64 = 1_000_000;
+-const WEEK: u64 = 7 * 86_400;
++const DAY: u64 = 86_400;
++const WEEK: u64 = 7 * DAY;
++/// Scales a 7-decimal price to the oracle's 14 decimals.
++const PX: i128 = 10_000_000;
++/// $0.20 with 7 decimals.
++const XLM: i128 = 2_000_000;
+ 
+ struct T {
+     env: Env,
+     id: Address,
+     token: Address,
+     admin: Address,
++    owner: Address,
++    operator: Address,
+     treasury: Address,
++    oracle: Address,
++    perpdex: Address,
+     key: SigningKey,
+     nonce: Cell<u64>,
+ }
+@@ -31,29 +48,75 @@ impl T {
+     fn token(&self) -> TokenClient<'_> {
+         TokenClient::new(&self.env, &self.token)
+     }
++    fn dex(&self) -> MockPerpdexClient<'_> {
++        MockPerpdexClient::new(&self.env, &self.perpdex)
++    }
++    fn now(&self) -> u64 {
++        self.env.ledger().timestamp()
++    }
+     fn trader(&self, funds: i128) -> Address {
+         let a = Address::generate(&self.env);
+-        StellarAssetClient::new(&self.env, &self.token).mint(&a, &funds);
++        if funds > 0 {
++            StellarAssetClient::new(&self.env, &self.token).mint(&a, &funds);
++        }
+         a
+     }
+     fn deposit(&self, amount: i128) {
+         let lp = self.trader(amount);
+         self.c().deposit_capital(&lp, &amount);
+     }
++    /// Sets the oracle record covering `ts` to a 7-decimal price.
++    fn feed(&self, asset: &str, ts: u64, price: i128) {
++        MockOracleClient::new(&self.env, &self.oracle).set(
++            &Symbol::new(&self.env, asset),
++            &ts,
++            &(price * PX),
++        );
++    }
++    fn mark(&self, asset: &str) -> i128 {
++        let a = Asset::Other(Symbol::new(&self.env, asset));
++        MockOracleClient::new(&self.env, &self.oracle)
++            .lastprice(&a)
++            .unwrap()
++            .price
++            / PX
++    }
++    fn open(&self, owner: &Address, asset: &str, dir: Direction, size: i128) -> BytesN<32> {
++        let d = match dir {
++            Direction::Long => tosbi_mock_perpdex::Direction::Long,
++            Direction::Short => tosbi_mock_perpdex::Direction::Short,
++        };
++        self.dex()
++            .open(owner, &Symbol::new(&self.env, asset), &d, &size)
++    }
++    /// XLM long at $0.20 covering down to $0.15, on a fresh position sized to the quote.
+     fn quote(&self, trader: &Address, amount: i128, max_payout: i128, premium: i128) -> Quote {
++        let pos = self.open(trader, "XLM", Direction::Long, amount * 5);
++        self.quote_on(trader, pos, amount, max_payout, premium)
++    }
++    fn quote_on(
++        &self,
++        trader: &Address,
++        position_id: BytesN<32>,
++        amount: i128,
++        max_payout: i128,
++        premium: i128,
++    ) -> Quote {
+         let n = self.nonce.get();
+         self.nonce.set(n + 1);
+-        let now = self.env.ledger().timestamp();
++        let now = self.now();
+         Quote {
+             vault: self.id.clone(),
++            perpdex: self.perpdex.clone(),
++            position_id,
+             trader: trader.clone(),
+             asset: symbol_short!("XLM"),
+             direction: Direction::Long,
+             amount,
+             qty: amount * 5,
+-            p_start: 2_000_000,
++            p_start: XLM,
+             p_end: 1_500_000,
+-            duration: 86_400,
++            duration: DAY,
+             max_payout,
+             premium,
+             fee: amount * 30 / 10_000,
+@@ -63,6 +126,22 @@ impl T {
+             nonce: n,
+         }
+     }
++    /// 1,000 USDC on a fresh `asset`/`dir` position at the current oracle price, 25% range.
++    fn quote_for(&self, trader: &Address, asset: &str, dir: Direction, max_payout: i128) -> Quote {
++        let px = self.mark(asset);
++        let qty = 1_000 * USDC * UNIT / px;
++        let pos = self.open(trader, asset, dir, qty);
++        let mut q = self.quote_on(trader, pos, 1_000 * USDC, max_payout, USDC);
++        q.asset = Symbol::new(&self.env, asset);
++        q.direction = dir;
++        q.qty = qty;
++        q.p_start = px;
++        q.p_end = match dir {
++            Direction::Long => px * 3 / 4,
++            Direction::Short => px * 5 / 4,
++        };
++        q
++    }
+     fn sign_with(&self, key: &SigningKey, q: &Quote) -> BytesN<64> {
+         let msg: Vec<u8> = q.clone().to_xdr(&self.env).iter().collect();
+         BytesN::from_array(&self.env, &key.sign(&msg).to_bytes())
+@@ -86,6 +165,13 @@ impl T {
+             s
+         );
+         assert!(self.token().balance(&self.id) >= s.capital);
++        let mut exposure = 0;
++        for asset in [symbol_short!("XLM"), symbol_short!("BTC")] {
++            for dir in [Direction::Long, Direction::Short] {
++                exposure += self.c().exposure(&asset, &dir);
++            }
++        }
++        assert_eq!(exposure, s.reserved, "exposure out of sync with reserved");
+     }
+ }
+ 
+@@ -97,6 +183,17 @@ fn params(wallet_cap_bps: u32) -> Params {
+         wallet_cap_max: 1_000_000 * USDC,
+         activation_delay: 300,
+         withdraw_delay: WEEK,
++        util_cap_bps: 10_000,
++        side_cap_bps: 10_000,
++        asset_cap_bps: 10_000,
++        mark_tol_bps: 50,
++        close_tol_bps: 150,
++        min_position_age: 0,
++        record_cap_bps: 1_500,
++        stale_max: 7_200,
++        big_payout: 10_000 * USDC,
++        share_pdx_bps: 0,
++        timelock: DAY,
+     }
+ }
+ 
+@@ -104,26 +201,43 @@ fn setup_with(p: Params) -> T {
+     let env = Env::default();
+     env.mock_all_auths();
+     env.ledger().set_timestamp(NOW);
+-    let admin = Address::generate(&env);
+-    let treasury = Address::generate(&env);
+     let token = env
+         .register_stellar_asset_contract_v2(Address::generate(&env))
+         .address();
+     let key = SigningKey::from_bytes(&[7u8; 32]);
+-    let pricer = BytesN::from_array(&env, &key.verifying_key().to_bytes());
++    let oracle = env.register(MockOracle, ());
++    let perpdex = env.register(MockPerpdex, (oracle.clone(),));
++    let cfg = Config {
++        admin: Address::generate(&env),
++        owner: Address::generate(&env),
++        operator: Address::generate(&env),
++        token: token.clone(),
++        treasury: Address::generate(&env),
++        pricer: BytesN::from_array(&env, &key.verifying_key().to_bytes()),
++        oracle: oracle.clone(),
++        params: p,
++    };
++    let assets = vec![&env, symbol_short!("XLM"), symbol_short!("BTC")];
+     let id = env.register(
+         ProtectionContract,
+-        (admin.clone(), token.clone(), treasury.clone(), pricer, p),
++        (cfg.clone(), assets, vec![&env, perpdex.clone()]),
+     );
+-    T {
++    let t = T {
+         env,
+         id,
+         token,
+-        admin,
+-        treasury,
++        admin: cfg.admin,
++        owner: cfg.owner,
++        operator: cfg.operator,
++        treasury: cfg.treasury,
++        oracle,
++        perpdex,
+         key,
+         nonce: Cell::new(1),
+-    }
++    };
++    t.feed("XLM", NOW, XLM);
++    t.feed("BTC", NOW, 100_000 * USDC);
++    t
+ }
+ 
+ fn setup() -> T {
+@@ -140,7 +254,7 @@ fn state(capital: i128, reserved: i128, locked: i128, unlock_at: u64) -> VaultSt
+ }
+ 
+ #[test]
+-fn h1_deposit_buy_release() {
++fn h1_deposit_buy() {
+     let t = setup();
+     t.deposit(10_000 * USDC);
+     let trader = t.trader(100 * USDC);
+@@ -155,18 +269,13 @@ fn h1_deposit_buy_release() {
+     assert_eq!(t.c().wallet_reserved(&trader), 250 * USDC);
+     let p = t.c().protection(&id).unwrap();
+     assert_eq!(
+-        (p.t_mint, p.t_active, p.t_expire),
+-        (NOW, NOW + 300, NOW + 86_400)
++        (p.t_mint, p.t_active, p.t_expire, p.window),
++        (NOW, NOW + 300, NOW + DAY, 1_206)
+     );
+     assert_eq!(
+         (p.status, p.max_payout, p.trader.clone()),
+         (Status::Active, 250 * USDC, trader.clone())
+     );
+-
+-    t.c().release(&trader, &id);
+-    assert_eq!(t.c().state(), state(10_026, 0, 0, 0));
+-    assert_eq!(t.c().wallet_reserved(&trader), 0);
+-    assert_eq!(t.c().protection(&id).unwrap().status, Status::Released);
+ }
+ 
+ #[test]
+@@ -174,13 +283,13 @@ fn h4_withdraw_after_delay() {
+     let t = setup();
+     t.deposit(1_000 * USDC);
+     assert_eq!(t.c().withdraw_request(&(400 * USDC)), NOW + WEEK);
+-    assert_eq!(t.env.auths()[0].0, t.admin);
++    assert_eq!(t.env.auths()[0].0, t.owner);
+     assert_eq!(t.c().state(), state(1_000, 0, 400, NOW + WEEK));
+ 
+     t.env.ledger().set_timestamp(NOW + WEEK);
+     assert_eq!(t.c().withdraw_execute(), 400 * USDC);
+     assert_eq!(t.c().state(), state(600, 0, 0, 0));
+-    assert_eq!(t.token().balance(&t.admin), 400 * USDC);
++    assert_eq!(t.token().balance(&t.owner), 400 * USDC);
+ }
+ 
+ #[test]
+@@ -335,13 +444,15 @@ fn x4_malformed_quote_fields() {
+     t.deposit(1_000 * USDC);
+     let trader = t.trader(100 * USDC);
+     let base = t.quote(&trader, 100 * USDC, 25 * USDC, USDC);
+-    let cases: [fn(&mut Quote); 6] = [
++    let cases: [fn(&mut Quote); 8] = [
+         |q| q.premium = 0,
+         |q| q.premium = -1,
+         |q| q.fee = -1,
+         |q| q.max_payout = 0,
+         |q| q.max_payout = q.amount + 1,
+         |q| q.duration = 0,
++        |q| q.qty = 0,
++        |q| q.p_start = 0,
+     ];
+     for f in cases {
+         let mut q = base.clone();
+@@ -406,23 +517,6 @@ fn x7_insufficient_trader_balance_reverts_everything() {
+     t.c().buy_protection(&q, &t.sign(&q));
+ }
+ 
+-#[test]
+-fn x8_release_errors() {
+-    let t = setup();
+-    t.deposit(1_000 * USDC);
+-    let trader = t.trader(100 * USDC);
+-    assert_eq!(t.c().try_release(&t.admin, &0), Err(Ok(Error::NotFound)));
+-    let id = t
+-        .buy(&t.quote(&trader, 100 * USDC, 25 * USDC, USDC))
+-        .unwrap();
+-    t.c().release(&t.admin, &id);
+-    assert_eq!(
+-        t.c().try_release(&t.admin, &id),
+-        Err(Ok(Error::AlreadyReleased))
+-    );
+-    assert_eq!(t.c().state(), state(1_001, 0, 0, 0));
+-}
+-
+ #[test]
+ fn x9_x10_withdrawal_and_amount_errors() {
+     let t = setup();
+@@ -499,84 +593,7 @@ fn c3_withdrawal_between_quote_and_buy() {
+ }
+ 
+ #[test]
+-fn c4_release_frees_capacity() {
+-    let t = setup();
+-    t.deposit(100 * USDC);
+-    let trader = t.trader(100 * USDC);
+-    let id = t
+-        .buy(&t.quote(&trader, 400 * USDC, 100 * USDC, USDC))
+-        .unwrap();
+-    let q = t.quote(&trader, 400 * USDC, 100 * USDC, USDC);
+-    assert_eq!(t.buy(&q), Err(Error::InsufficientCapital));
+-    t.c().release(&trader, &id);
+-    t.buy(&t.quote(&trader, 400 * USDC, 100 * USDC, USDC))
+-        .unwrap();
+-}
+-
+-#[test]
+-fn c5_random_sequences_keep_full_backing() {
+-    for seed in 1..=20u64 {
+-        let t = setup();
+-        let traders: Vec<Address> = (0..4).map(|_| t.trader(1_000_000 * USDC)).collect();
+-        let mut rng = seed;
+-        let mut next = |n: u64| {
+-            rng = rng
+-                .wrapping_mul(6364136223846793005)
+-                .wrapping_add(1442695040888963407);
+-            (rng >> 33) % n
+-        };
+-        let mut ids: Vec<u64> = Vec::new();
+-        for _ in 0..60 {
+-            let before = t.c().state();
+-            let ok = match next(5) {
+-                0 => {
+-                    let lp = t.trader(10_000 * USDC);
+-                    t.c()
+-                        .try_deposit_capital(&lp, &((next(5_000) as i128 + 1) * USDC))
+-                        .is_ok()
+-                }
+-                1 | 2 => {
+-                    let trader = &traders[next(4) as usize];
+-                    let amount = (next(10_000) as i128 + 20) * USDC;
+-                    let max = amount * (next(50) as i128 + 1) / 100;
+-                    let r = t.buy(&t.quote(trader, amount, max, amount / 50 + 1));
+-                    if let Ok(id) = r {
+-                        ids.push(id);
+-                    }
+-                    r.is_ok()
+-                }
+-                3 if !ids.is_empty() => {
+-                    let id = ids[next(ids.len() as u64) as usize];
+-                    t.c().try_release(&t.admin, &id).is_ok()
+-                }
+-                _ => {
+-                    if t.c().state().unlock_at != 0 {
+-                        t.env
+-                            .ledger()
+-                            .set_timestamp(t.env.ledger().timestamp() + WEEK);
+-                        t.c().try_withdraw_execute().is_ok()
+-                    } else {
+-                        t.c()
+-                            .try_withdraw_request(&((next(3_000) as i128 + 1) * USDC))
+-                            .is_ok()
+-                    }
+-                }
+-            };
+-            if !ok {
+-                assert_eq!(
+-                    t.c().state(),
+-                    before,
+-                    "failed call changed state (seed {})",
+-                    seed
+-                );
+-            }
+-            t.assert_invariant();
+-        }
+-    }
+-}
+-
+-#[test]
+-fn s1_s2_admin_only_withdrawals() {
++fn s1_s2_owner_only_withdrawals() {
+     let t = setup();
+     t.deposit(1_000 * USDC);
+     t.env.set_auths(&[]);
+@@ -591,23 +608,6 @@ fn s1_s2_admin_only_withdrawals() {
+     assert!(matches!(t.c().try_withdraw_execute(), Err(Err(_))));
+ }
+ 
+-#[test]
+-fn s3_release_only_by_admin_or_owner() {
+-    let t = setup();
+-    t.deposit(1_000 * USDC);
+-    let trader = t.trader(100 * USDC);
+-    let id = t
+-        .buy(&t.quote(&trader, 100 * USDC, 25 * USDC, USDC))
+-        .unwrap();
+-    let stranger = Address::generate(&t.env);
+-    assert_eq!(
+-        t.c().try_release(&stranger, &id),
+-        Err(Ok(Error::Unauthorized))
+-    );
+-    t.env.set_auths(&[]);
+-    assert!(matches!(t.c().try_release(&trader, &id), Err(Err(_))));
+-}
+-
+ #[test]
+ fn s4_s5_buy_requires_quoted_traders_auth() {
+     let t = setup();
+@@ -634,8 +634,9 @@ fn s8_direct_transfer_does_not_add_capacity() {
+     );
+ }
+ 
+-const JS_XDR: &str = "0000001100000001000000100000000f00000006616d6f756e7400000000000a000000000000000000000002540be4000000000f0000000561737365740000000000000f00000003584c4d000000000f00000009646972656374696f6e00000000000003000000000000000f000000086475726174696f6e0000000500000000000151800000000f0000000a657870697265735f617400000000000500000000000f425e0000000f00000003666565000000000a00000000000000000000000001c9c3800000000f0000000a6d61785f7061796f757400000000000a0000000000000000000000009502f9000000000f000000056e6f6e636500000000000005000000000000002a0000000f00000005705f656e640000000000000a0000000000000000000000000016e3600000000f00000007705f7374617274000000000a000000000000000000000000001e84800000000f000000077072656d69756d000000000a0000000000000000000000000f485a800000000f00000003717479000000000a00000000000000000000000ba43b74000000000f0000000971756f7465645f61740000000000000500000000000f42400000000f000000067472616465720000000000120000000102020202020202020202020202020202020202020202020202020202020202020000000f000000057661756c74000000000000120000000101010101010101010101010101010101010101010101010101010101010101010000000f00000007766f6c5f627073000000000300002710";
+-const JS_SIG: &str = "dddebb2eabfc3881b728e2430be21fa3980269dad817bc61925049820dee0ba92bfeced96055fe290b163a0d0e3005e38300f5246a96deae8f22b1ae230bc903";
++// Generated by pricer/test/quote.test.ts (FIXTURE). Regenerate both together.
++const JS_XDR: &str = "0000001100000001000000120000000f00000006616d6f756e7400000000000a000000000000000000000002540be4000000000f0000000561737365740000000000000f00000003584c4d000000000f00000009646972656374696f6e00000000000003000000000000000f000000086475726174696f6e0000000500000000000151800000000f0000000a657870697265735f617400000000000500000000000f425e0000000f00000003666565000000000a00000000000000000000000001c9c3800000000f0000000a6d61785f7061796f757400000000000a0000000000000000000000009502f9000000000f000000056e6f6e636500000000000005000000000000002a0000000f00000005705f656e640000000000000a0000000000000000000000000016e3600000000f00000007705f7374617274000000000a000000000000000000000000001e84800000000f000000077065727064657800000000120000000103030303030303030303030303030303030303030303030303030303030303030000000f0000000b706f736974696f6e5f6964000000000d0000002000000000000000000000000000000000000000000000000000000000000000000000000f000000077072656d69756d000000000a0000000000000000000000000f485a800000000f00000003717479000000000a00000000000000000000000ba43b74000000000f0000000971756f7465645f61740000000000000500000000000f42400000000f000000067472616465720000000000120000000102020202020202020202020202020202020202020202020202020202020202020000000f000000057661756c74000000000000120000000101010101010101010101010101010101010101010101010101010101010101010000000f00000007766f6c5f627073000000000300002710";
++const JS_SIG: &str = "b5bd05b88444d81275d85ddb031c58294b11b2cabe10de94165733bed93c218c88a456ebf6d4eb925dd2b2ba07e66f79229c17839d9ff8317ce3c22a2be3e90e";
+ 
+ fn unhex(s: &str) -> Vec<u8> {
+     (0..s.len())
+@@ -649,30 +650,42 @@ fn h5_js_signed_quote_is_accepted() {
+     let env = Env::default();
+     env.mock_all_auths();
+     env.ledger().set_timestamp(NOW);
+-    let vault = Address::from_str(
+-        &env,
+-        "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526",
+-    );
+-    let trader = Address::from_str(
+-        &env,
+-        "CABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAFNSZ",
+-    );
++    let at = |c: &str| Address::from_str(&env, c);
++    let vault = at("CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526");
++    let trader = at("CABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAFNSZ");
++    let perpdex = at("CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3");
+     let token = env
+         .register_stellar_asset_contract_v2(Address::generate(&env))
+         .address();
+-    let pricer = BytesN::from_array(
+-        &env,
+-        &SigningKey::from_bytes(&[7u8; 32])
+-            .verifying_key()
+-            .to_bytes(),
++    let oracle = env.register(MockOracle, ());
++    MockOracleClient::new(&env, &oracle).set(&symbol_short!("XLM"), &NOW, &(XLM * PX));
++    env.register_at(&perpdex, MockPerpdex, (oracle.clone(),));
++    let position_id = MockPerpdexClient::new(&env, &perpdex).open(
++        &trader,
++        &symbol_short!("XLM"),
++        &tosbi_mock_perpdex::Direction::Long,
++        &(5_000 * USDC),
+     );
+     let lp = Address::generate(&env);
++    let cfg = Config {
++        admin: lp.clone(),
++        owner: lp.clone(),
++        operator: lp.clone(),
++        token: token.clone(),
++        treasury: Address::generate(&env),
++        pricer: BytesN::from_array(
++            &env,
++            &SigningKey::from_bytes(&[7u8; 32])
++                .verifying_key()
++                .to_bytes(),
++        ),
++        oracle,
++        params: params(10_000),
++    };
+     let args = (
+-        lp.clone(),
+-        token.clone(),
+-        Address::generate(&env),
+-        pricer,
+-        params(10_000),
++        cfg,
++        vec![&env, symbol_short!("XLM")],
++        vec![&env, perpdex.clone()],
+     );
+     env.register_at(&vault, ProtectionContract, args);
+     let sac = StellarAssetClient::new(&env, &token);
+@@ -683,6 +696,8 @@ fn h5_js_signed_quote_is_accepted() {
+ 
+     let q = Quote {
+         vault: vault.clone(),
++        perpdex,
++        position_id,
+         trader: trader.clone(),
+         asset: symbol_short!("XLM"),
+         direction: Direction::Long,
+diff --git a/contracts/protection/src/test/binding.rs b/contracts/protection/src/test/binding.rs
+new file mode 100644
+index 0000000..ab05a7e
+--- /dev/null
++++ b/contracts/protection/src/test/binding.rs
+@@ -0,0 +1,103 @@
++use super::*;
++
++pub(super) const SIZE: i128 = 5_000 * USDC;
++
++pub(super) fn funded() -> (T, Address) {
++    let t = setup();
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    (t, trader)
++}
++
++/// Buys 1,000 USDC of cover on a fresh XLM long position; returns (position, protection id).
++pub(super) fn covered(t: &T, trader: &Address) -> (BytesN<32>, u64) {
++    let pos = t.open(trader, "XLM", Direction::Long, SIZE);
++    let q = t.quote_on(trader, pos.clone(), 1_000 * USDC, 250 * USDC, 26 * USDC);
++    (pos, t.buy(&q).unwrap())
++}
++
++#[test]
++fn b1_mint_requires_the_traders_matching_open_position() {
++    let (t, trader) = funded();
++    let other = t.trader(0);
++    let buy_on = |pos: BytesN<32>| t.buy(&t.quote_on(&trader, pos, 1_000 * USDC, 250 * USDC, USDC));
++
++    assert_eq!(
++        buy_on(t.open(&other, "XLM", Direction::Long, SIZE)),
++        Err(Error::PositionMismatch)
++    );
++    assert_eq!(
++        buy_on(t.open(&trader, "XLM", Direction::Short, SIZE)),
++        Err(Error::PositionMismatch)
++    );
++    assert_eq!(
++        buy_on(t.open(&trader, "BTC", Direction::Long, SIZE)),
++        Err(Error::PositionMismatch)
++    );
++    assert_eq!(
++        buy_on(t.open(&trader, "XLM", Direction::Long, SIZE - 1)),
++        Err(Error::PositionMismatch)
++    );
++    let closed = t.open(&trader, "XLM", Direction::Long, SIZE);
++    t.dex().close(&closed, &None);
++    assert_eq!(buy_on(closed), Err(Error::PositionMismatch));
++    assert_eq!(
++        buy_on(BytesN::from_array(&t.env, &[9u8; 32])),
++        Err(Error::PositionMismatch)
++    );
++
++    assert_eq!(t.c().state(), state(10_000, 0, 0, 0));
++    buy_on(t.open(&trader, "XLM", Direction::Long, SIZE)).unwrap();
++}
++
++#[test]
++fn b2_mark_must_be_within_half_a_percent_of_the_quote() {
++    let (t, trader) = funded();
++    let pos = t.open(&trader, "XLM", Direction::Long, SIZE);
++    t.feed("XLM", NOW, 2_010_001);
++    let q = t.quote_on(&trader, pos.clone(), 1_000 * USDC, 250 * USDC, USDC);
++    assert_eq!(t.buy(&q), Err(Error::MarkMoved));
++    t.feed("XLM", NOW, 2_010_000);
++    let q = t.quote_on(&trader, pos, 1_000 * USDC, 250 * USDC, USDC);
++    t.buy(&q).unwrap();
++}
++
++#[test]
++fn b3_position_must_be_at_least_a_minute_old() {
++    let t = setup_with(Params {
++        min_position_age: 60,
++        ..params(10_000)
++    });
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    let pos = t.open(&trader, "XLM", Direction::Long, SIZE);
++    t.env.ledger().set_timestamp(NOW + 59);
++    let q = t.quote_on(&trader, pos.clone(), 1_000 * USDC, 250 * USDC, USDC);
++    assert_eq!(t.buy(&q), Err(Error::PositionTooNew));
++    t.env.ledger().set_timestamp(NOW + 60);
++    let q = t.quote_on(&trader, pos, 1_000 * USDC, 250 * USDC, USDC);
++    t.buy(&q).unwrap();
++}
++
++#[test]
++fn b4_one_protection_per_position_and_allowlists() {
++    let (t, trader) = funded();
++    let (pos, _) = covered(&t, &trader);
++    let q = t.quote_on(&trader, pos, 1_000 * USDC, 250 * USDC, USDC);
++    assert_eq!(t.buy(&q), Err(Error::AlreadyCovered));
++
++    t.feed("ETH", t.now(), 4_000 * USDC);
++    let q = t.quote_for(&trader, "ETH", Direction::Long, 250 * USDC);
++    assert_eq!(t.buy(&q), Err(Error::AssetDisabled));
++
++    let rogue = t.env.register(MockPerpdex, (t.oracle.clone(),));
++    let pos = MockPerpdexClient::new(&t.env, &rogue).open(
++        &trader,
++        &symbol_short!("XLM"),
++        &tosbi_mock_perpdex::Direction::Long,
++        &SIZE,
++    );
++    let mut q = t.quote_on(&trader, pos, 1_000 * USDC, 250 * USDC, USDC);
++    q.perpdex = rogue;
++    assert_eq!(t.buy(&q), Err(Error::PerpdexNotAllowed));
++}
+diff --git a/contracts/protection/src/test/caps.rs b/contracts/protection/src/test/caps.rs
+new file mode 100644
+index 0000000..6de3158
+--- /dev/null
++++ b/contracts/protection/src/test/caps.rs
+@@ -0,0 +1,72 @@
++use super::*;
++
++#[test]
++fn k1_last_ten_percent_of_the_pool_is_never_sold() {
++    let t = setup_with(Params {
++        util_cap_bps: 9_000,
++        ..params(10_000)
++    });
++    t.deposit(1_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    // available after the 1 USDC premium = 1,001 → 90% = 900.9
++    let cap = 1_001 * USDC * 9 / 10;
++    let q = t.quote(&trader, 4_000 * USDC, cap + 1, USDC);
++    assert_eq!(t.buy(&q), Err(Error::UtilizationCap));
++    let q = t.quote(&trader, 4_000 * USDC, cap, USDC);
++    t.buy(&q).unwrap();
++    t.assert_invariant();
++}
++
++#[test]
++fn k2_concentration_caps_per_side_and_per_asset() {
++    let t = setup_with(Params {
++        side_cap_bps: 2_500,
++        asset_cap_bps: 4_000,
++        ..params(10_000)
++    });
++    t.deposit(999 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    let buy =
++        |asset: &str, dir: Direction, max: i128| t.buy(&t.quote_for(&trader, asset, dir, max));
++    // Each buy adds its 1 USDC premium to available capital before the check.
++    // 250 = 25% of 1,000.
++    buy("XLM", Direction::Long, 250 * USDC).unwrap();
++    // 251 > 25% of 1,001.
++    let over_side = buy("XLM", Direction::Long, USDC);
++    assert_eq!(over_side, Err(Error::ConcentrationCap));
++    // XLM total 400 ≤ 40% of 1,001.
++    buy("XLM", Direction::Short, 150 * USDC).unwrap();
++    // XLM total 401 > 40% of 1,002.
++    let over_asset = buy("XLM", Direction::Short, USDC);
++    assert_eq!(over_asset, Err(Error::ConcentrationCap));
++    buy("BTC", Direction::Long, 200 * USDC).unwrap();
++
++    assert_eq!(
++        t.c().exposure(&symbol_short!("XLM"), &Direction::Long),
++        250 * USDC
++    );
++    assert_eq!(
++        t.c().exposure(&symbol_short!("XLM"), &Direction::Short),
++        150 * USDC
++    );
++    assert_eq!(
++        t.c().exposure(&symbol_short!("BTC"), &Direction::Long),
++        200 * USDC
++    );
++    t.assert_invariant();
++}
++
++#[test]
++fn k4_fee_is_split_with_the_perpdex() {
++    let t = setup_with(Params {
++        share_pdx_bps: 3_000,
++        ..params(10_000)
++    });
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    t.buy(&t.quote(&trader, 1_000 * USDC, 250 * USDC, USDC))
++        .unwrap();
++    // fee = 0.3% of 1,000 = 3 USDC → 0.9 to the PerpDEX owner, 2.1 to the treasury
++    assert_eq!(t.token().balance(&t.owner), 9 * USDC / 10);
++    assert_eq!(t.token().balance(&t.treasury), 21 * USDC / 10);
++}
+diff --git a/contracts/protection/src/test/early.rs b/contracts/protection/src/test/early.rs
+new file mode 100644
+index 0000000..65ed9fd
+--- /dev/null
++++ b/contracts/protection/src/test/early.rs
+@@ -0,0 +1,71 @@
++use super::binding::{covered, funded, SIZE};
++use super::*;
++
++#[test]
++fn b5_close_within_tolerance_settles_at_the_close_price() {
++    let (t, trader) = funded();
++    let (pos, id) = covered(&t, &trader);
++    t.env.ledger().set_timestamp(NOW + 3_600);
++    t.feed("XLM", NOW + 3_600, 1_810_000);
++    assert_eq!(t.c().try_settle_early(&id), Err(Ok(Error::NotClosed)));
++    t.dex().close(&pos, &Some(1_800_000));
++    assert_eq!(t.c().settle_early(&id), 100 * USDC);
++    assert_eq!(t.c().try_settle_early(&id), Err(Ok(Error::AlreadySettled)));
++    let p = t.c().protection(&id).unwrap();
++    assert_eq!((p.settle_price, p.status), (1_800_000, Status::Settled));
++    assert_eq!(t.c().state(), state(10_026 - 100, 0, 0, 0));
++}
++
++#[test]
++fn b6_outlier_close_falls_back_to_the_oracle() {
++    let (t, trader) = funded();
++    let (pos, id) = covered(&t, &trader);
++    t.env.ledger().set_timestamp(NOW + 3_600);
++    t.feed("XLM", NOW + 3_600, 1_810_000);
++    t.dex().close(&pos, &Some(1_700_000));
++    assert_eq!(t.c().settle_early(&id), 95 * USDC);
++    assert_eq!(t.c().protection(&id).unwrap().settle_price, 1_810_000);
++}
++
++#[test]
++fn b7_close_before_activation_pays_nothing() {
++    let (t, trader) = funded();
++    let (pos, id) = covered(&t, &trader);
++    t.env.ledger().set_timestamp(NOW + 299);
++    t.feed("XLM", NOW + 299, 1_000_000);
++    t.dex().close(&pos, &None);
++    assert_eq!(t.c().settle_early(&id), 0);
++    assert_eq!(t.c().state(), state(10_026, 0, 0, 0));
++}
++
++#[test]
++fn b8_liquidation_settles_like_a_close() {
++    let (t, trader) = funded();
++    let (pos, id) = covered(&t, &trader);
++    t.env.ledger().set_timestamp(NOW + 3_600);
++    t.feed("XLM", NOW + 3_600, 1_500_000);
++    t.dex().liquidate(&pos, &None);
++    assert_eq!(t.c().settle_early(&id), 250 * USDC);
++}
++
++#[test]
++fn b9_reduced_position_settles_whole_contract_at_the_oracle() {
++    let (t, trader) = funded();
++    let (pos, id) = covered(&t, &trader);
++    t.env.ledger().set_timestamp(NOW + 3_600);
++    t.feed("XLM", NOW + 3_600, 1_900_000);
++    t.dex().reduce(&pos, &(SIZE - USDC));
++    assert_eq!(t.c().settle_early(&id), 50 * USDC);
++    t.assert_invariant();
++}
++
++#[test]
++fn b10_close_after_expiry_uses_the_expiry_twap() {
++    let (t, trader) = funded();
++    let (pos, id) = covered(&t, &trader);
++    let end = NOW + DAY;
++    t.feed_window("XLM", end, 1_700_000);
++    t.env.ledger().set_timestamp(end + 100);
++    t.dex().close(&pos, &Some(1_000_000));
++    assert_eq!(t.c().settle_early(&id), 150 * USDC);
++}
+diff --git a/contracts/protection/src/test/governance.rs b/contracts/protection/src/test/governance.rs
+new file mode 100644
+index 0000000..ba83ee6
+--- /dev/null
++++ b/contracts/protection/src/test/governance.rs
+@@ -0,0 +1,141 @@
++use super::binding::covered;
++use super::*;
++
++#[test]
++fn g1_changes_wait_for_the_timelock() {
++    let t = setup();
++    let new = Params {
++        a_min: 50 * USDC,
++        ..params(10_000)
++    };
++    let cid = t.c().propose(&Change::Params(new.clone()));
++    assert_eq!(t.env.auths()[0].0, t.admin);
++    assert_eq!(t.c().pending_change(&cid).unwrap().eta, NOW + DAY);
++    t.env.ledger().set_timestamp(NOW + DAY - 1);
++    assert_eq!(t.c().try_execute(&cid), Err(Ok(Error::Timelocked)));
++    t.env.ledger().set_timestamp(NOW + DAY);
++    t.c().execute(&cid);
++    assert_eq!(t.c().config().params, new);
++    assert_eq!(t.c().try_execute(&cid), Err(Ok(Error::NoChange)));
++}
++
++#[test]
++fn g2_admin_can_cancel_and_only_admin_proposes() {
++    let t = setup();
++    let cid = t.c().propose(&Change::Treasury(Address::generate(&t.env)));
++    t.c().cancel(&cid);
++    assert_eq!(t.c().pending_change(&cid), None);
++    assert_eq!(t.c().try_cancel(&cid), Err(Ok(Error::NoChange)));
++    t.env.set_auths(&[]);
++    let change = Change::Treasury(Address::generate(&t.env));
++    assert!(t.c().try_propose(&change).is_err());
++}
++
++#[test]
++fn g3_pause_stops_sales_but_not_settlement_or_withdrawals() {
++    let t = setup();
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    let id = t
++        .buy(&t.quote(&trader, 1_000 * USDC, 250 * USDC, 26 * USDC))
++        .unwrap();
++    let stranger = Address::generate(&t.env);
++    assert_eq!(t.c().try_pause(&stranger), Err(Ok(Error::Unauthorized)));
++
++    t.c().pause(&t.owner);
++    assert!(t.c().paused());
++    let q = t.quote(&trader, 100 * USDC, 25 * USDC, USDC);
++    assert_eq!(t.buy(&q), Err(Error::Paused));
++    assert_eq!(t.settle_at(id, 1_700_000), 150 * USDC);
++    t.c().withdraw_request(&(100 * USDC));
++
++    t.c().unpause();
++    assert_eq!(t.env.auths()[0].0, t.admin);
++    assert!(!t.c().paused());
++    t.c().pause(&t.operator);
++    assert!(t.c().paused());
++}
++
++#[test]
++fn g4_rotated_pricer_key_replaces_the_old_one() {
++    let t = setup();
++    t.deposit(1_000 * USDC);
++    let trader = t.trader(100 * USDC);
++    let new_key = SigningKey::from_bytes(&[9u8; 32]);
++    let raw = BytesN::from_array(&t.env, &new_key.verifying_key().to_bytes());
++    let cid = t.c().propose(&Change::Pricer(raw));
++    t.env.ledger().set_timestamp(NOW + DAY);
++    t.c().execute(&cid);
++    let q = t.quote(&trader, 100 * USDC, 25 * USDC, USDC);
++    assert!(matches!(
++        t.c().try_buy_protection(&q, &t.sign(&q)),
++        Err(Err(_))
++    ));
++    t.c().buy_protection(&q, &t.sign_with(&new_key, &q));
++}
++
++#[test]
++fn g5_assets_can_be_enabled_and_disabled() {
++    let t = setup();
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    let on = t.c().propose(&Change::Asset(symbol_short!("ETH"), true));
++    let off = t.c().propose(&Change::Asset(symbol_short!("XLM"), false));
++    t.env.ledger().set_timestamp(NOW + DAY);
++    t.c().execute(&on);
++    t.c().execute(&off);
++    t.feed("ETH", t.now(), 4_000 * USDC);
++    t.buy(&t.quote_for(&trader, "ETH", Direction::Long, 250 * USDC))
++        .unwrap();
++    let q = t.quote(&trader, 1_000 * USDC, 250 * USDC, USDC);
++    assert_eq!(t.buy(&q), Err(Error::AssetDisabled));
++}
++
++#[test]
++fn g6_only_the_operator_posts_the_vol_hash() {
++    let t = setup();
++    let h = BytesN::from_array(&t.env, &[1u8; 32]);
++    t.c().set_vol_hash(&h);
++    assert_eq!(t.env.auths()[0].0, t.operator);
++    assert_eq!(t.c().vol_hash(), Some(h));
++    t.env.set_auths(&[]);
++    let h2 = BytesN::from_array(&t.env, &[2u8; 32]);
++    assert!(t.c().try_set_vol_hash(&h2).is_err());
++}
++
++#[test]
++fn b11_delisted_perpdex_still_settles_early() {
++    let t = setup_with(Params {
++        timelock: 3_600,
++        ..params(10_000)
++    });
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    let (pos, id) = covered(&t, &trader);
++    let cid = t.c().propose(&Change::Perpdex(t.perpdex.clone(), false));
++    t.env.ledger().set_timestamp(NOW + 3_600);
++    t.c().execute(&cid);
++    let q = t.quote(&trader, 1_000 * USDC, 250 * USDC, USDC);
++    assert_eq!(t.buy(&q), Err(Error::PerpdexNotAllowed));
++
++    t.feed("XLM", NOW + 3_600, 1_800_000);
++    t.dex().close(&pos, &None);
++    assert_eq!(t.c().settle_early(&id), 100 * USDC);
++}
++
++#[test]
++fn g7_disabling_an_asset_still_settles_live_cover() {
++    let t = setup_with(Params {
++        timelock: 3_600,
++        ..params(10_000)
++    });
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    let id = t
++        .buy(&t.quote(&trader, 1_000 * USDC, 250 * USDC, USDC))
++        .unwrap();
++    let cid = t.c().propose(&Change::Asset(symbol_short!("XLM"), false));
++    t.env.ledger().set_timestamp(NOW + 3_600);
++    t.c().execute(&cid);
++    assert_eq!(t.settle_at(id, 1_700_000), 150 * USDC);
++}
+diff --git a/contracts/protection/src/test/settle.rs b/contracts/protection/src/test/settle.rs
+new file mode 100644
+index 0000000..bb5717c
+--- /dev/null
++++ b/contracts/protection/src/test/settle.rs
+@@ -0,0 +1,314 @@
++use super::*;
++
++impl T {
++    /// Every record from 35 minutes before `end` through `end`: more than any settlement window.
++    pub(super) fn feed_window(&self, asset: &str, end: u64, price: i128) {
++        let mut ts = end - 2_100;
++        while ts <= end {
++            self.feed(asset, ts, price);
++            ts += 300;
++        }
++    }
++    /// Moves to expiry if needed, sets every XLM record in the window to `price`, and settles.
++    pub(super) fn settle_at(&self, id: u64, price: i128) -> i128 {
++        let p = self.c().protection(&id).unwrap();
++        if self.now() < p.t_expire {
++            self.env.ledger().set_timestamp(p.t_expire);
++        }
++        self.feed_window("XLM", p.t_expire, price);
++        self.c().settle(&id)
++    }
++}
++
++/// 10,000 USDC pool; trader protects 1,000 USDC of XLM long at $0.20 down to $0.15 for a day.
++fn bought(t: &T) -> (Address, u64) {
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(100 * USDC);
++    let id = t
++        .buy(&t.quote(&trader, 1_000 * USDC, 250 * USDC, 26 * USDC))
++        .unwrap();
++    (trader, id)
++}
++
++#[test]
++fn st1_long_payout_tracks_the_loss_up_to_the_cap() {
++    for (price, payout) in [(2_300_000, 0), (1_700_000, 150), (1_000_000, 250)] {
++        let t = setup();
++        let (trader, id) = bought(&t);
++        let before = t.token().balance(&trader);
++        assert_eq!(t.settle_at(id, price), payout * USDC, "price {}", price);
++        assert_eq!(t.token().balance(&trader) - before, payout * USDC);
++        assert_eq!(t.c().state(), state(10_026 - payout, 0, 0, 0));
++        let p = t.c().protection(&id).unwrap();
++        assert_eq!(
++            (p.status, p.settle_price, p.payout),
++            (Status::Settled, price, payout * USDC)
++        );
++        assert_eq!(t.c().wallet_reserved(&trader), 0);
++        t.assert_invariant();
++    }
++}
++
++#[test]
++fn st2_short_payout_mirrors_long() {
++    for (price, payout) in [(1_700_000, 0), (2_300_000, 150), (3_000_000, 250)] {
++        let t = setup();
++        t.deposit(10_000 * USDC);
++        let trader = t.trader(100 * USDC);
++        let pos = t.open(&trader, "XLM", Direction::Short, 5_000 * USDC);
++        let mut q = t.quote_on(&trader, pos, 1_000 * USDC, 250 * USDC, 22 * USDC);
++        q.direction = Direction::Short;
++        q.p_end = 2_500_000;
++        let id = t.buy(&q).unwrap();
++        assert_eq!(t.settle_at(id, price), payout * USDC, "price {}", price);
++        t.assert_invariant();
++    }
++}
++
++#[test]
++fn st3_twap_averages_the_window_and_skips_spikes() {
++    let t = setup();
++    let (_, id) = bought(&t);
++    let end = NOW + DAY;
++    t.env.ledger().set_timestamp(end);
++    t.feed_window("XLM", end, 1_700_000);
++    // A −41% single-record spike inside the window is ignored.
++    t.feed("XLM", end - 600, 1_000_000);
++    assert_eq!(t.c().settle(&id), 150 * USDC);
++
++    let t = setup();
++    let (_, id) = bought(&t);
++    t.env.ledger().set_timestamp(end);
++    t.feed_window("XLM", end, 1_700_000);
++    // A −5.9% record is real movement: (4 × 0.17 + 0.16) / 5 = 0.168.
++    t.feed("XLM", end - 600, 1_600_000);
++    assert_eq!(t.c().settle(&id), 160 * USDC);
++}
++
++#[test]
++fn st4_missing_oracle_waits_then_settles_degraded() {
++    let t = setup();
++    let (_, id) = bought(&t);
++    let end = NOW + DAY;
++    t.feed("XLM", end - 3_600, 1_700_000);
++    t.env.ledger().set_timestamp(end + 60);
++    assert_eq!(t.c().try_settle(&id), Err(Ok(Error::OracleStale)));
++    t.env.ledger().set_timestamp(end + 7_199);
++    assert_eq!(t.c().try_settle(&id), Err(Ok(Error::OracleStale)));
++
++    t.env.ledger().set_timestamp(end + 7_200);
++    assert_eq!(t.c().settle(&id), 150 * USDC);
++    let last = t.env.events().all().filter_by_contract(&t.id);
++    let degraded = Settled {
++        id,
++        price: 1_700_000,
++        payout: 150 * USDC,
++        early: false,
++        degraded: true,
++    };
++    assert_eq!(last.events().last(), Some(&degraded.to_xdr(&t.env, &t.id)));
++}
++
++#[test]
++fn st5_window_scales_with_duration_and_size() {
++    let p = params(10_000);
++    for (d, w) in [
++        (900, 300),
++        (3_600, 300),
++        (14_400, 492),
++        (43_200, 853),
++        (86_400, 1_206),
++        (259_200, 1_800),
++        (604_800, 1_800),
++    ] {
++        assert_eq!(window_for(d, USDC, &p), w, "duration {}", d);
++    }
++    assert_eq!(window_for(900, 10_000 * USDC, &p), 300);
++    assert_eq!(window_for(900, 10_000 * USDC + 1, &p), 1_800);
++}
++
++#[test]
++fn st6_late_call_still_uses_the_window_at_expiry() {
++    let t = setup();
++    let (_, id) = bought(&t);
++    let end = NOW + DAY;
++    t.feed_window("XLM", end, 1_700_000);
++    t.env.ledger().set_timestamp(end + 3 * 3_600);
++    t.feed("XLM", end + 3 * 3_600, 2_400_000);
++    assert_eq!(t.c().settle(&id), 150 * USDC);
++}
++
++#[test]
++fn x8_settle_errors() {
++    let t = setup();
++    t.deposit(1_000 * USDC);
++    let trader = t.trader(100 * USDC);
++    assert_eq!(t.c().try_settle(&0), Err(Ok(Error::NotFound)));
++    let id = t
++        .buy(&t.quote(&trader, 100 * USDC, 25 * USDC, USDC))
++        .unwrap();
++    t.env.ledger().set_timestamp(NOW + DAY - 1);
++    assert_eq!(t.c().try_settle(&id), Err(Ok(Error::NotExpired)));
++    t.settle_at(id, XLM);
++    assert_eq!(t.c().try_settle(&id), Err(Ok(Error::AlreadySettled)));
++    assert_eq!(t.c().state(), state(1_001, 0, 0, 0));
++}
++
++#[test]
++fn c4_settlement_frees_capacity() {
++    let t = setup();
++    t.deposit(100 * USDC);
++    let trader = t.trader(100 * USDC);
++    let id = t
++        .buy(&t.quote(&trader, 400 * USDC, 100 * USDC, USDC))
++        .unwrap();
++    let q = t.quote(&trader, 400 * USDC, 100 * USDC, USDC);
++    assert_eq!(t.buy(&q), Err(Error::InsufficientCapital));
++    t.settle_at(id, XLM);
++    t.buy(&t.quote(&trader, 400 * USDC, 100 * USDC, USDC))
++        .unwrap();
++}
++
++#[test]
++fn c5_random_sequences_keep_full_backing() {
++    for seed in 1..=20u64 {
++        let t = setup();
++        let traders: Vec<Address> = (0..4).map(|_| t.trader(1_000_000 * USDC)).collect();
++        let mut rng = seed;
++        let mut next = |n: u64| {
++            rng = rng
++                .wrapping_mul(6364136223846793005)
++                .wrapping_add(1442695040888963407);
++            (rng >> 33) % n
++        };
++        let mut ids: Vec<u64> = Vec::new();
++        for _ in 0..60 {
++            let before = t.c().state();
++            let ok = match next(5) {
++                0 => {
++                    let lp = t.trader(10_000 * USDC);
++                    t.c()
++                        .try_deposit_capital(&lp, &((next(5_000) as i128 + 1) * USDC))
++                        .is_ok()
++                }
++                1 | 2 => {
++                    let trader = &traders[next(4) as usize];
++                    let amount = (next(10_000) as i128 + 20) * USDC;
++                    let max = amount * (next(50) as i128 + 1) / 100;
++                    let r = t.buy(&t.quote(trader, amount, max, amount / 50 + 1));
++                    if let Ok(id) = r {
++                        ids.push(id);
++                    }
++                    r.is_ok()
++                }
++                3 if !ids.is_empty() => {
++                    let id = ids[next(ids.len() as u64) as usize];
++                    let p = t.c().protection(&id).unwrap();
++                    if t.now() < p.t_expire {
++                        t.env.ledger().set_timestamp(p.t_expire);
++                    }
++                    t.feed_window("XLM", p.t_expire, 1_000_000 + next(2_000_000) as i128);
++                    let ok = t.c().try_settle(&id).is_ok();
++                    t.feed("XLM", t.now(), XLM);
++                    ok
++                }
++                _ => {
++                    if t.c().state().unlock_at != 0 {
++                        t.env.ledger().set_timestamp(t.now() + WEEK);
++                        t.c().try_withdraw_execute().is_ok()
++                    } else {
++                        t.c()
++                            .try_withdraw_request(&((next(3_000) as i128 + 1) * USDC))
++                            .is_ok()
++                    }
++                }
++            };
++            if !ok {
++                assert_eq!(
++                    t.c().state(),
++                    before,
++                    "failed call changed state (seed {})",
++                    seed
++                );
++            }
++            t.assert_invariant();
++        }
++    }
++}
++
++#[test]
++fn s3_settlement_needs_no_signature() {
++    let t = setup();
++    t.deposit(1_000 * USDC);
++    let trader = t.trader(100 * USDC);
++    let id = t
++        .buy(&t.quote(&trader, 100 * USDC, 25 * USDC, USDC))
++        .unwrap();
++    t.env.ledger().set_timestamp(NOW + DAY);
++    t.feed_window("XLM", NOW + DAY, 1_700_000);
++    t.env.set_auths(&[]);
++    assert_eq!(t.c().settle(&id), 15 * USDC);
++}
++
++#[test]
++fn k3_settlement_releases_exposure() {
++    let t = setup();
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    let id = t
++        .buy(&t.quote(&trader, 1_000 * USDC, 250 * USDC, USDC))
++        .unwrap();
++    assert_eq!(
++        t.c().exposure(&symbol_short!("XLM"), &Direction::Long),
++        250 * USDC
++    );
++    t.settle_at(id, XLM);
++    assert_eq!(t.c().exposure(&symbol_short!("XLM"), &Direction::Long), 0);
++    t.assert_invariant();
++}
++
++#[test]
++fn st7_settlement_frees_the_position_for_new_cover() {
++    let t = setup();
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    let pos = t.open(&trader, "XLM", Direction::Long, 5_000 * USDC);
++    let q = t.quote_on(&trader, pos.clone(), 1_000 * USDC, 250 * USDC, USDC);
++    let id = t.buy(&q).unwrap();
++    t.settle_at(id, XLM);
++    let q = t.quote_on(&trader, pos, 1_000 * USDC, 250 * USDC, USDC);
++    t.buy(&q).unwrap();
++}
++
++#[test]
++fn st8_a_missing_oracle_record_inside_the_window_is_skipped() {
++    let t = setup();
++    let (_, id) = bought(&t);
++    let end = NOW + DAY;
++    t.env.ledger().set_timestamp(end);
++    // Records every 5 minutes for the 1d window (5 records + anchor), except end − 600.
++    for k in 0..=5u64 {
++        if k != 2 {
++            t.feed("XLM", end - k * 300, 1_700_000);
++        }
++    }
++    assert_eq!(t.c().settle(&id), 150 * USDC);
++}
++
++#[test]
++fn st9_btc_scale_prices_pay_to_the_unit() {
++    let t = setup();
++    t.deposit(10_000 * USDC);
++    let trader = t.trader(1_000 * USDC);
++    // 1,000 USDC of BTC long at $100,000 → 0.01 BTC; 25% range → max payout 250.
++    let id = t
++        .buy(&t.quote_for(&trader, "BTC", Direction::Long, 250 * USDC))
++        .unwrap();
++    let p = t.c().protection(&id).unwrap();
++    assert_eq!((p.qty, p.p_start), (100_000, 100_000 * USDC));
++    t.env.ledger().set_timestamp(p.t_expire);
++    // $100,000 → $91,234.5678901: loss 0.087654321 × 1,000 = 87.654321 USDC.
++    t.feed_window("BTC", p.t_expire, 912_345_678_901);
++    assert_eq!(t.c().settle(&id), 876_543_210);
++    t.assert_invariant();
++}
+diff --git a/pricer/public/index.html b/pricer/public/index.html
+index 74d219d..d8c1fdc 100644
+--- a/pricer/public/index.html
++++ b/pricer/public/index.html
+@@ -76,8 +76,8 @@ code { font-size: 13px; overflow-wrap: anywhere; }
+ 
+   <div class="grid">
+     <section class="wide" aria-labelledby="vault-h">
+-      <h2 id="vault-h">Protection Capital vault</h2>
+-      <p class="muted">Every protection reserves its maximum payout. The contract refuses any sale that would make reservations exceed pool capital.</p>
++      <h2 id="vault-h">Protection Capital vault <span id="paused" class="badge msg-bad" hidden>Sales paused</span></h2>
++      <p class="muted">Every protection reserves its maximum payout. The contract refuses any sale that would make reservations exceed pool capital, and caps how much any one asset and direction can take.</p>
+       <div class="bar" role="img" id="bar" aria-label="Vault usage"></div>
+       <dl class="stats">
+         <div class="k-cap"><dt>Pool capital</dt><dd id="s-cap">–</dd></div>
+@@ -85,7 +85,8 @@ code { font-size: 13px; overflow-wrap: anywhere; }
+         <div class="k-lock"><dt>Queued withdrawal</dt><dd id="s-lock">–</dd></div>
+         <div class="k-free"><dt>Free to back new protection</dt><dd id="s-free">–</dd></div>
+       </dl>
+-      <p class="muted" style="margin-top:10px">Contract <a id="vault-link" target="_blank" rel="noopener"><code id="vault-id"></code></a></p>
++      <p class="muted" style="margin-top:10px">Reserved by asset: <span id="s-exp">–</span></p>
++      <p class="muted">Vault <a id="vault-link" target="_blank" rel="noopener"><code id="vault-id"></code></a> · Test PerpDEX <a id="dex-link" target="_blank" rel="noopener"><code id="dex-id"></code></a></p>
+     </section>
+ 
+     <section aria-labelledby="start-h">
+@@ -98,18 +99,31 @@ code { font-size: 13px; overflow-wrap: anywhere; }
+       <p style="margin-top:12px">Your balance: <strong id="bal">–</strong> · Your active reserve: <strong id="wres">–</strong></p>
+     </section>
+ 
++    <section aria-labelledby="open-h">
++      <h2 id="open-h">2. Open a test position</h2>
++      <p class="muted">A stand-in PerpDEX. Positions open at the oracle price and cost nothing. Protection can only be bought on a position you hold, at least a minute old.</p>
++      <form id="open-form">
++        <div class="row">
++          <div><label for="o-asset">Asset</label><select id="o-asset"><option>XLM</option><option>BTC</option><option>ETH</option></select></div>
++          <div><label for="o-dir">Direction</label><select id="o-dir"><option value="long">Long</option><option value="short">Short</option></select></div>
++          <div><label for="o-notional">Size (USD)</label><input id="o-notional" inputmode="decimal" value="1000" required></div>
++        </div>
++        <button id="b-open" class="primary" type="submit" disabled>Open position</button>
++      </form>
++      <div id="positions" style="margin-top:12px"></div>
++      <div class="row" style="margin-top:8px">
++        <div><label for="close-price">Close at a chosen price (USD)</label><input id="close-price" inputmode="decimal" placeholder="e.g. 0.15"></div>
++      </div>
++    </section>
++
+     <section aria-labelledby="buy-h">
+-      <h2 id="buy-h">2. Protect a position</h2>
++      <h2 id="buy-h">3. Protect a position</h2>
+       <form id="quote-form">
+-        <fieldset class="row">
+-          <legend class="muted" style="font-size:13px;margin-bottom:4px">Your position (XLM)</legend>
+-          <div class="seg">
+-            <label><input type="radio" name="direction" value="long" checked> Long</label>
+-            <label><input type="radio" name="direction" value="short"> Short</label>
+-          </div>
+-        </fieldset>
+         <div class="row">
++          <div><label for="pos">Position</label><select id="pos"><option value="">Open a position first</option></select></div>
+           <div><label for="amount">Protected amount (USDC)</label><input id="amount" inputmode="decimal" value="500" required></div>
++        </div>
++        <div class="row">
+           <div><label for="duration">Duration</label>
+             <select id="duration">
+               <option value="900">15 minutes</option><option value="3600">1 hour</option><option value="14400">4 hours</option>
+@@ -126,24 +140,23 @@ code { font-size: 13px; overflow-wrap: anywhere; }
+     </section>
+ 
+     <section aria-labelledby="mine-h">
+-      <h2 id="mine-h">3. Your protections</h2>
+-      <p class="muted">Release frees the reserved capital with no payout. Settlement and payouts arrive in the next milestone.</p>
++      <h2 id="mine-h">4. Your protections</h2>
++      <p class="muted">At expiry the keeper settles on the oracle's average price; if you close, reduce or get liquidated first, it settles at that moment. Both happen within a minute, or press the button yourself.</p>
+       <div id="mine"><p class="muted">None yet.</p></div>
+     </section>
+ 
+     <section aria-labelledby="admin-h">
+-      <h2 id="admin-h">Vault admin actions</h2>
+-      <p class="muted">Anyone can add capital. Withdrawals are admin-only with a 7-day notice; try one to see the contract refuse you.</p>
++      <h2 id="admin-h">Vault owner actions</h2>
++      <p class="muted">Anyone can add capital. Withdrawals belong to the PerpDEX (the owner) with a 7-day notice; pausing needs the owner or TOSBI. Try one to see the contract refuse you.</p>
+       <div class="row">
+         <div><label for="dep">Deposit capital (tUSDC)</label><input id="dep" inputmode="decimal" value="100"></div>
+         <div><label for="wd">Withdraw request (tUSDC)</label><input id="wd" inputmode="decimal" value="100"></div>
+-        <div><label for="rel">Release protection id</label><input id="rel" inputmode="numeric" value="0"></div>
+       </div>
+       <div class="actions">
+         <button id="b-dep" disabled>Deposit</button>
+         <button id="b-wd" disabled>Request withdrawal</button>
+         <button id="b-wx" disabled>Execute withdrawal</button>
+-        <button id="b-rel" disabled>Release</button>
++        <button id="b-pause" disabled>Pause sales</button>
+       </div>
+     </section>
+ 
+@@ -158,19 +171,32 @@ code { font-size: 13px; overflow-wrap: anywhere; }
+ <script>
+ const F = window.freighterApi;
+ const UNIT = 1e7;
++const ASSETS = ["XLM", "BTC", "ETH"];
+ const $ = (id) => document.getElementById(id);
+ const fmt = (u) => (Number(u) / UNIT).toLocaleString(undefined, { maximumFractionDigits: 2 });
+-const price = (u) => (Number(u) / UNIT).toFixed(5);
++const price = (u) => (Number(u) / UNIT).toPrecision(6);
++const side = (d) => (Number(d) === 0 ? "Long" : "Short");
+ const MESSAGES = {
+   InsufficientCapital: "Rejected by the contract: the pool cannot back this. Reserved capital plus this protection's max payout would exceed pool capital.",
++  UtilizationCap: "Rejected by the contract: the last 10% of the pool is a buffer and is never sold.",
++  ConcentrationCap: "Rejected by the contract: one asset and direction may use at most 25% of the pool, one asset at most 40%.",
+   WalletCapExceeded: "Rejected by the contract: this wallet would hold more than 2% of the pool in active protection.",
+   AmountOutOfRange: "Rejected by the contract: the protected amount must be between 20 and 50,000 USDC.",
++  AlreadyCovered: "Rejected by the contract: this position already has active protection.",
++  PositionTooNew: "Rejected by the contract: the position must be at least a minute old. Try again shortly.",
++  PositionMismatch: "Rejected by the contract: the position is not open, not yours, or smaller than the cover.",
++  MarkMoved: "Rejected by the contract: the price moved more than 0.5% since the quote. Get a new quote.",
++  Paused: "Rejected by the contract: new sales are paused.",
++  AssetDisabled: "Rejected by the contract: this asset is not enabled.",
+   QuoteExpired: "The quote expired after 30 seconds. Get a new one.",
+   NonceUsed: "This quote has already been used.",
+   PaymentFailed: "Payment failed: not enough tUSDC in your wallet.",
+-  Unauthorized: "Rejected by the contract: only the vault admin or the protection's owner can release it.",
+-  AuthRequired: "Rejected: the contract requires the vault admin's signature for this action, and your wallet is not the admin.",
+-  AlreadyReleased: "That protection was already released.",
++  Unauthorized: "Rejected by the contract: only the vault owner (PerpDEX) or TOSBI can pause sales.",
++  AuthRequired: "Rejected: the contract requires the vault owner's signature for this action, and your wallet is not the owner.",
++  AlreadySettled: "That protection is already settled.",
++  NotExpired: "Not expired yet.",
++  NotClosed: "The position is still open at full size, so there is nothing to settle early.",
++  OracleStale: "The oracle has no price for the settlement window yet. The keeper will retry.",
+   NotFound: "No protection with that id.",
+   WithdrawalPending: "A withdrawal is already queued.",
+   NoWithdrawal: "No withdrawal is queued.",
+@@ -178,13 +204,16 @@ const MESSAGES = {
+   InvalidAmount: "The amount must be positive.",
+   InvalidQuote: "The quote failed validation.",
+ };
+-let me = null, data = null, current = null, timer = null;
++let me = null, data = null, timer = null;
+ 
+-function myIds() {
+-  try { return JSON.parse(localStorage.getItem("tosbi.ids") || "[]"); } catch { return []; }
++// Saved per vault and wallet: a redeploy or a wallet switch starts a fresh list.
++const key = (kind) => `tosbi.${data.vault}.${me}.${kind}`;
++function stored(kind) {
++  if (!me) return [];
++  try { return JSON.parse(localStorage.getItem(key(kind)) || "[]"); } catch { return []; }
+ }
+-function saveIds(ids) {
+-  try { localStorage.setItem("tosbi.ids", JSON.stringify(ids)); } catch {}
++function store(kind, list) {
++  try { localStorage.setItem(key(kind), JSON.stringify(list)); } catch {}
+ }
+ 
+ function log(kind, text, hash) {
+@@ -233,6 +262,28 @@ async function action(label, body) {
+   return signAndSubmit(r.tx, label);
+ }
+ 
++function button(text, label, onclick) {
++  const b = document.createElement("button");
++  b.textContent = text; b.setAttribute("aria-label", label);
++  b.onclick = () => busy(b, onclick);
++  return b;
++}
++
++function table(headers, rows) {
++  const t = document.createElement("table");
++  const head = document.createElement("tr");
++  for (const h of headers) { const th = document.createElement("th"); th.scope = "col"; th.textContent = h; head.append(th); }
++  const thead = document.createElement("thead"); thead.append(head);
++  const body = document.createElement("tbody");
++  for (const cells of rows) {
++    const tr = document.createElement("tr");
++    for (const c of cells) { const td = document.createElement("td"); td.append(c); tr.append(td); }
++    body.append(tr);
++  }
++  t.append(thead, body);
++  return t;
++}
++
+ async function refresh() {
+   data = await api("/api/state" + (me ? `?addr=${me}` : ""));
+   const s = data.state, cap = Number(s.capital), res = Number(s.reserved), lock = Number(s.locked);
+@@ -240,47 +291,80 @@ async function refresh() {
+   $("s-cap").textContent = fmt(cap); $("s-res").textContent = fmt(res);
+   $("s-lock").textContent = lock ? `${fmt(lock)} (unlocks ${new Date(Number(s.unlock_at) * 1000).toLocaleString()})` : "0";
+   $("s-free").textContent = fmt(free);
++  $("s-exp").textContent = ASSETS.map((a) => `${a} long ${fmt(data.exposure[a].long)} / short ${fmt(data.exposure[a].short)}`).join(" · ");
++  $("paused").hidden = !data.paused;
+   const bar = $("bar"); bar.replaceChildren();
+   for (const [v, color] of [[res, "var(--reserved)"], [lock, "var(--locked)"]]) {
+     const span = document.createElement("span");
+     span.style.width = cap ? `${(100 * v) / cap}%` : "0"; span.style.background = color; bar.append(span);
+   }
+   bar.setAttribute("aria-label", `Reserved ${fmt(res)}, queued ${fmt(lock)}, free ${fmt(free)} of ${fmt(cap)} pool capital`);
+-  $("vault-id").textContent = data.vault;
+-  $("vault-link").href = `https://stellar.expert/explorer/testnet/contract/${data.vault}`;
++  for (const [id, link, c] of [["vault-id", "vault-link", data.vault], ["dex-id", "dex-link", data.perpdex]]) {
++    $(id).textContent = c; $(link).href = `https://stellar.expert/explorer/testnet/contract/${c}`;
++  }
+   document.querySelectorAll(".asset-code").forEach((e) => (e.textContent = data.asset.code));
+   if (data.wallet) {
+     $("bal").textContent = data.wallet.balance === null ? "no trustline yet" : `${fmt(data.wallet.balance)} ${data.asset.code}`;
+     $("wres").textContent = fmt(data.wallet.reserved);
+   }
+-  await renderMine();
++  await Promise.all([renderPositions(), renderMine()]);
++}
++
++async function renderPositions() {
++  const ids = stored("positions");
++  if (!ids.length) return;
++  const positions = await Promise.all(ids.map((id) => api(`/api/position?id=${id}`).then((p) => [id, p]).catch(() => null)));
++  const open = positions.filter((x) => x && Number(x[1].status) === 0);
++  const select = $("pos"), keep = select.value;
++  select.replaceChildren(...(open.length ? open : [[ "", null ]]).map(([id, p]) => {
++    const o = document.createElement("option"); o.value = id;
++    o.textContent = p ? `${p.asset} ${side(p.direction)} · $${fmt((BigInt(p.size) * BigInt(p.mark_price)) / 10_000_000n)} · ${id.slice(-6)}` : "Open a position first";
++    return o;
++  }));
++  if (open.some(([id]) => id === keep)) select.value = keep;
++  const status = ["Open", "Closed", "Liquidated"];
++  const rows = positions.filter(Boolean).map(([id, p]) => {
++    const actions = document.createElement("span");
++    actions.className = "actions";
++    if (Number(p.status) === 0) {
++      const label = `${p.asset} ${side(p.direction)} ${id.slice(-6)}`;
++      actions.append(
++        button("Close", `Close ${label} at the market`, () => action(`Close ${label}`, { action: "close", positionId: id })),
++        button("Close at price", `Close ${label} at the chosen price`, () => {
++          const at = $("close-price").value.trim();
++          if (!at) throw new Error("Enter a close price first");
++          return action(`Close ${label} at $${at}`, { action: "close", positionId: id, price: at });
++        }),
++        button("Halve", `Close half of ${label}`, () => action(`Halve ${label}`, { action: "reduce", positionId: id })),
++        button("Liquidate", `Liquidate ${label}`, () => action(`Liquidate ${label}`, { action: "liquidate", positionId: id })),
++      );
++    }
++    const closed = p.close_price ? ` at $${price(p.close_price)}` : "";
++    return [id.slice(-6), `${p.asset} ${side(p.direction)}`, `$${price(p.entry_price)} → $${price(p.mark_price)}`, `${status[Number(p.status)]}${closed}`, actions];
++  });
++  $("positions").replaceChildren(table(["Id", "Position", "Entry → mark", "Status", "Actions"], rows));
+ }
+ 
+ async function renderMine() {
+-  const ids = myIds();
++  const ids = stored("ids");
+   if (!ids.length) return;
+-  const table = document.createElement("table");
+-  table.innerHTML = "<thead><tr><th scope='col'>Id</th><th scope='col'>Side</th><th scope='col'>Max payout</th><th scope='col'>Expires</th><th scope='col'>Status</th><th scope='col'><span class='muted'>Action</span></th></tr></thead>";
+-  const body = document.createElement("tbody");
++  const now = Date.now() / 1000;
++  const rows = [];
+   for (const id of ids) {
+     const p = await api(`/api/protection?id=${encodeURIComponent(id)}`).catch(() => null);
+     if (!p) continue;
+-    const tr = document.createElement("tr");
+-    const status = Number(p.status) === 1 ? "Released" : Date.now() / 1000 < Number(p.t_active) ? "Pending (5 min delay)" : "Active";
+-    for (const v of [id, Number(p.direction) === 0 ? "Long" : "Short", fmt(p.max_payout), new Date(Number(p.t_expire) * 1000).toLocaleString(), status]) {
+-      const td = document.createElement("td"); td.textContent = v; tr.append(td);
++    const settled = Number(p.status) === 1;
++    const status = settled ? `Settled at $${price(p.settle_price)}: paid ${fmt(p.payout)}` : now < Number(p.t_active) ? "Pending (5 min delay)" : "Active";
++    const actions = document.createElement("span");
++    actions.className = "actions";
++    if (!settled) {
++      actions.append(now >= Number(p.t_expire)
++        ? button("Settle", `Settle protection ${id}`, () => action(`Settle #${id}`, { action: "settle", id: String(id) }))
++        : button("Settle early", `Settle protection ${id} early`, () => action(`Settle #${id} early`, { action: "settle_early", id: String(id) })));
+     }
+-    const td = document.createElement("td");
+-    if (Number(p.status) !== 1) {
+-      const b = document.createElement("button"); b.textContent = "Release";
+-      b.setAttribute("aria-label", `Release protection ${id}`);
+-      b.onclick = () => busy(b, () => action(`Release #${id}`, { action: "release", id: String(id) }));
+-      td.append(b);
+-    }
+-    tr.append(td); body.append(tr);
++    rows.push([id, `${p.asset} ${side(p.direction)}`, fmt(p.max_payout), new Date(Number(p.t_expire) * 1000).toLocaleString(), status, actions]);
+   }
+-  table.append(body);
+-  $("mine").replaceChildren(table);
++  $("mine").replaceChildren(table(["Id", "Cover", "Max payout", "Expires", "Status", "Actions"], rows));
+ }
+ 
+ function renderQuote(q) {
+@@ -293,21 +377,17 @@ function renderQuote(q) {
+   }
+   const t = q.quote, b = q.breakdown, long = t.direction === "long";
+   const rows = [
++    ["Position", `${t.asset} ${long ? "Long" : "Short"}`],
+     ["Protection start", `$${price(t.p_start)}`],
+     [long ? "Covers a fall down to" : "Covers a rise up to", `$${price(t.p_end)}`],
+     ["Maximum payout (reserved)", `${fmt(t.max_payout)} USDC`],
+     ["Volatility used", `${(t.vol_bps / 100).toFixed(1)}% (${long ? "downside" : "upside"})`],
+     ["Fair price", `${b.fair.toFixed(2)} USDC`],
+-    ["Loadings", `utilization ×${b.mU.toFixed(3)}, margin ×1.05`],
++    ["Loadings", `utilization ×${b.mU.toFixed(3)}, concentration ×${b.mC.toFixed(3)}, margin ×1.05`],
+     ["Premium → pool", `${fmt(t.premium)} USDC`],
+     ["Protection fee → TOSBI", `${fmt(t.fee)} USDC`],
+   ];
+-  const table = document.createElement("table"); const body = document.createElement("tbody");
+-  for (const [k, v] of rows) {
+-    const tr = document.createElement("tr"); const th = document.createElement("th"); th.scope = "row"; th.textContent = k;
+-    const td = document.createElement("td"); td.textContent = v; tr.append(th, td); body.append(tr);
+-  }
+-  table.append(body); box.append(table);
++  box.append(table(["", ""], rows.map(([k, v]) => [k, v])));
+   add("p", `Total cost: ${fmt(BigInt(t.premium) + BigInt(t.fee))} USDC`, "total");
+   const status = add("p", "", "muted"); status.setAttribute("role", "status");
+   const buy = document.createElement("button"); buy.className = "primary"; buy.textContent = "Buy protection";
+@@ -324,18 +404,26 @@ function renderQuote(q) {
+     if (!r) return;
+     clearInterval(timer);
+     $("quote").hidden = true;
+-    const ids = myIds(); ids.push(String(r.result)); saveIds(ids);
++    store("ids", [...stored("ids"), String(r.result)]);
+     log("ok", `Protection #${r.result} is live`);
+     await renderMine();
+   });
+ }
+ 
+ async function quote(body) {
+-  const q = await api("/api/quote", { trader: me, ...body });
++  const q = await api("/api/quote", body);
+   if (q.rejected) log("bad", explain(q.rejected));
+   renderQuote(q);
+ }
+ 
++async function openPosition(asset, direction, notional) {
++  const r = await action(`Open ${asset} ${direction} $${notional}`, { action: "open", asset, direction, notional });
++  if (!r) return null;
++  store("positions", [...stored("positions"), r.result]);
++  await renderPositions();
++  return r.result;
++}
++
+ async function connect() {
+   if (!data) await refresh();
+   if (!F || !(await F.isConnected()).isConnected) {
+@@ -365,20 +453,28 @@ $("fund-usdc").onclick = () => busy($("fund-usdc"), async () => {
+   log(r.status === "SUCCESS" ? "ok" : "bad", `Faucet sent 1,000 ${data.asset.code}`, r.hash);
+   await refresh();
+ });
++$("open-form").onsubmit = (e) => {
++  e.preventDefault();
++  busy($("b-open"), () => openPosition($("o-asset").value, $("o-dir").value, $("o-notional").value.trim()));
++};
+ $("quote-form").onsubmit = (e) => {
+   e.preventDefault();
++  if (!$("pos").value) { log("bad", "Open a position first (step 2)."); return; }
+   busy($("get-quote"), () => quote({
+-    direction: document.querySelector("input[name=direction]:checked").value,
++    positionId: $("pos").value,
+     amount: $("amount").value.trim(),
+     duration: Number($("duration").value),
+     rangeBps: Math.round(Number($("range").value) * 100),
+   }));
+ };
+-$("exceed").onclick = () => busy($("exceed"), () => quote({ direction: "long", amount: "50000", duration: 86400, rangeBps: 5000 }));
++$("exceed").onclick = () => busy($("exceed"), async () => {
++  const id = await openPosition("XLM", "long", "60000");
++  if (id) await quote({ positionId: id, amount: "50000", duration: 86400, rangeBps: 5000 });
++});
+ $("b-dep").onclick = () => busy($("b-dep"), () => action("Deposit capital", { action: "deposit", amount: $("dep").value.trim() }));
+ $("b-wd").onclick = () => busy($("b-wd"), () => action("Withdrawal request", { action: "withdraw_request", amount: $("wd").value.trim() }));
+ $("b-wx").onclick = () => busy($("b-wx"), () => action("Execute withdrawal", { action: "withdraw_execute" }));
+-$("b-rel").onclick = () => busy($("b-rel"), () => action(`Release #${$("rel").value}`, { action: "release", id: $("rel").value.trim() }));
++$("b-pause").onclick = () => busy($("b-pause"), () => action("Pause sales", { action: "pause" }));
+ 
+ refresh().catch((e) => log("bad", `Could not load vault state: ${e.message}`));
+ setInterval(() => refresh().catch(() => {}), 15000);
+diff --git a/pricer/scripts/calibrate.ts b/pricer/scripts/calibrate.ts
+index 4c743bb..d2150e4 100644
+--- a/pricer/scripts/calibrate.ts
++++ b/pricer/scripts/calibrate.ts
+@@ -1,29 +1,34 @@
+-// Builds vol-table.json from Binance XLMUSDT history using quantile-matched σ (spec §3.3).
++// Builds vol-tables/<ASSET>.json from Coinbase history using quantile-matched σ (spec §3.3).
++// Usage: npm run calibrate -- XLM|BTC|ETH
+ import { writeFileSync } from "node:fs";
+ import { BUCKETS, expectedLoss, impliedSigma, PARAMS, YEAR_SECS, type Direction } from "../src/pricing.ts";
+ 
+-const SYMBOL = "XLMUSDT";
+-const API = "https://data-api.binance.vision/api/v3/klines";
++const FLOORS: Record<string, number> = { XLM: 0.6, BTC: 0.5, ETH: 0.5 };
++const ASSET = process.argv[2] ?? "";
++if (!(ASSET in FLOORS)) throw new Error(`usage: npm run calibrate -- ${Object.keys(FLOORS).join("|")}`);
++const FLOOR = FLOORS[ASSET];
++const PRODUCT = `${ASSET}-USD`;
++const API = "https://api.exchange.coinbase.com/products";
+ const R_REF = 0.25;
+-const FLOOR = 0.6;
++const PER_REQUEST = 300;
+ 
+-async function closes(interval: string, stepSecs: number, days: number): Promise<number[]> {
+-  const out: number[] = [];
+-  const end = Date.now();
+-  let start = end - days * 86_400_000;
+-  while (start < end) {
+-    const res = await fetch(`${API}?symbol=${SYMBOL}&interval=${interval}&startTime=${start}&limit=1000`);
+-    if (!res.ok) throw new Error(`klines ${interval}: HTTP ${res.status}`);
+-    const rows = (await res.json()) as [number, string, string, string, string][];
+-    if (rows.length === 0) break;
+-    out.push(...rows.map((r) => Number(r[4])));
+-    start = rows[rows.length - 1][0] + stepSecs * 1000;
++// ponytail: Coinbase omits candles with no trades, so a gap is treated as one step.
++async function closes(stepSecs: number, days: number): Promise<number[]> {
++  const byTime = new Map<number, number>();
++  const end = Math.floor(Date.now() / 1000 / stepSecs) * stepSecs;
++  for (let from = end - days * 86_400; from < end; from += PER_REQUEST * stepSecs) {
++    const to = Math.min(from + (PER_REQUEST - 1) * stepSecs, end);
++    const iso = (s: number) => new Date(s * 1000).toISOString();
++    const url = `${API}/${PRODUCT}/candles?granularity=${stepSecs}&start=${iso(from)}&end=${iso(to)}`;
++    const res = await fetch(url, { headers: { "user-agent": "tosbi-calibrate" } });
++    if (!res.ok) throw new Error(`candles ${PRODUCT} ${stepSecs}s: HTTP ${res.status}`);
++    for (const [t, , , , close] of (await res.json()) as number[][]) byTime.set(t, close);
+   }
+-  return out;
++  return [...byTime.entries()].sort((a, b) => a[0] - b[0]).map(([, c]) => c);
+ }
+ 
+ const round4 = (x: number) => Math.round(x * 10_000) / 10_000;
+-const series = { short: await closes("5m", 300, 30), long: await closes("1h", 3_600, 90) };
++const series = { short: await closes(300, 30), long: await closes(3_600, 90) };
+ 
+ const buckets = Object.fromEntries(
+   BUCKETS.map((secs) => {
+@@ -42,13 +47,13 @@ const buckets = Object.fromEntries(
+ );
+ 
+ const table = {
+-  asset: "XLM",
+-  source: `Binance ${SYMBOL} closes: 30d of 5m for buckets <= 12h, 90d of 1h for >= 1d`,
++  asset: ASSET,
++  source: `Coinbase ${PRODUCT} closes: 30d of 5m for buckets <= 12h, 90d of 1h for >= 1d`,
+   generated_at: new Date().toISOString(),
+   r_ref: R_REF,
+   floor: FLOOR,
+   cap: PARAMS.sigmaCap,
+   buckets,
+ };
+-writeFileSync(new URL("../vol-table.json", import.meta.url), JSON.stringify(table, null, 2) + "\n");
++writeFileSync(new URL(`../vol-tables/${ASSET}.json`, import.meta.url), JSON.stringify(table, null, 2) + "\n");
+ console.table(buckets);
+diff --git a/pricer/scripts/e2e.ts b/pricer/scripts/e2e.ts
+index ff473d6..8502c1f 100644
+--- a/pricer/scripts/e2e.ts
++++ b/pricer/scripts/e2e.ts
+@@ -1,12 +1,15 @@
+-// End-to-end run of the Worker API against a deployed vault. Run scripts/deploy.sh first.
++// End-to-end run of the Worker API and keeper against a deployed vault. Run scripts/deploy.sh first.
+ import assert from "node:assert/strict";
+ import { readFileSync } from "node:fs";
++import { setTimeout as sleep } from "node:timers/promises";
+ import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
+-import worker from "../src/worker.ts";
++import worker, { type KV } from "../src/worker.ts";
+ 
+ type Env = Parameters<typeof worker.fetch>[1];
+ const vars = readFileSync(new URL("../.dev.vars", import.meta.url), "utf8").trim().split("\n");
+-const env = Object.fromEntries(vars.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)])) as unknown as Env;
++const store = new Map<string, string>();
++const kv: KV = { get: async (k) => store.get(k) ?? null, put: async (k, v) => void store.set(k, v) };
++const env = { ...Object.fromEntries(vars.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)])), KV: kv } as unknown as Env;
+ const friendbot = env.RPC_URL.includes("localhost") ? "http://localhost:8000/friendbot" : "https://friendbot.stellar.org";
+ const U = 10_000_000;
+ type Body = any;
+@@ -25,72 +28,96 @@ async function signSubmit(kp: Keypair, xdr: string): Promise<Body> {
+   return r.body;
+ }
+ 
+-const state = async (who: string) => (await call(`/api/state?addr=${who}`)).body;
+-const ok = (name: string) => console.log(`ok  ${name}`);
+-
+ const trader = Keypair.random();
+ const me = trader.publicKey();
++const tx = async (action: string, extra: object = {}) => {
++  const r = await call("/api/tx", { action, source: me, ...extra });
++  assert.ok(r.body.tx, JSON.stringify(r.body));
++  return signSubmit(trader, r.body.tx);
++};
++const open = async (direction: string, notional: string) => String((await tx("open", { asset: "XLM", direction, notional })).result);
++const quote = (positionId: string, amount: string, duration = 86_400, rangeBps = 2_500) =>
++  call("/api/quote", { positionId, amount, duration, rangeBps });
++const state = async () => (await call(`/api/state?addr=${me}`)).body;
++const ok = (name: string) => console.log(`ok  ${name}`);
++
+ assert.ok((await fetch(`${friendbot}?addr=${me}`)).ok, "friendbot");
+-const s0 = await state(me);
++const s0 = await state();
+ assert.ok(Number(s0.state.capital) >= 10_000 * U);
+ assert.equal(s0.wallet.balance, null);
+ ok("vault readable, new wallet has no trustline");
+ 
+ await signSubmit(trader, (await call("/api/tx", { action: "trust", source: me })).body.tx);
+-const fauceted = await call("/api/faucet", { addr: me });
+-assert.equal(fauceted.body.status, "SUCCESS");
+-assert.equal((await state(me)).wallet.balance, String(1_000 * U));
++assert.equal((await call("/api/faucet", { addr: me })).body.status, "SUCCESS");
++assert.equal((await state()).wallet.balance, String(1_000 * U));
+ assert.equal((await call("/api/faucet", { addr: me })).status, 400);
+ ok("trustline + faucet 1,000 tUSDC, second faucet refused");
+ 
+-const t0 = Date.now();
+-const q = await call("/api/quote", { trader: me, direction: "long", amount: "500", duration: 86_400, rangeBps: 2_500 });
+-const quoteMs = Date.now() - t0;
+-assert.ok(q.body.tx, JSON.stringify(q.body));
+-const bought = await signSubmit(trader, q.body.tx);
+-const id0 = String(bought.result);
+-const s1 = await state(me);
+-assert.equal(s1.wallet.reserved, String(125 * U));
+-assert.equal(BigInt(s1.state.reserved) - BigInt(s0.state.reserved), BigInt(125 * U));
+-assert.equal(BigInt(s1.state.capital) - BigInt(s0.state.capital), BigInt(q.body.quote.premium));
+-ok(`bought LONG protection #${id0}: premium ${Number(q.body.quote.premium) / U}, fee ${Number(q.body.quote.fee) / U} (quote in ${quoteMs} ms)`);
++const pos0 = await open("long", "1000");
++const pos1 = await open("long", "2000");
++const big = await open("long", "60000");
++const shortPos = await open("short", "300");
++const p0 = (await call(`/api/position?id=${pos0}`)).body;
++assert.equal(p0.owner, me);
++assert.equal(p0.status, 0);
++const age = Number(s0.config.params.min_position_age);
++if (age > 0) await sleep((age + 6) * 1_000);
++ok(`opened 4 mock positions, waited ${age}s minimum position age`);
+ 
+-const exceed = await call("/api/quote", { trader: me, direction: "long", amount: "50000", duration: 86_400, rangeBps: 5_000 });
+-assert.equal(exceed.body.rejected?.name, "InsufficientCapital");
+-ok("exceed-the-pool quote rejected by the contract: InsufficientCapital");
++const q0 = await quote(pos0, "500");
++assert.ok(q0.body.tx, JSON.stringify(q0.body));
++const id0 = String((await signSubmit(trader, q0.body.tx)).result);
++const s1 = await state();
++assert.equal(s1.wallet.reserved, String(125 * U));
++assert.equal(s1.exposure.XLM.long, String(BigInt(s0.exposure.XLM.long) + BigInt(125 * U)));
++ok(`bought LONG protection #${id0}: premium ${Number(q0.body.quote.premium) / U}, fee ${Number(q0.body.quote.fee) / U}`);
+ 
+-const capped = await call("/api/quote", { trader: me, direction: "long", amount: "400", duration: 86_400, rangeBps: 2_500 });
+-assert.equal(capped.body.rejected?.name, "WalletCapExceeded");
+-ok("second purchase over the 2% wallet cap rejected: WalletCapExceeded");
++assert.equal((await quote(pos0, "100")).body.rejected?.name, "AlreadyCovered");
++ok("second protection on the same position rejected: AlreadyCovered");
++assert.equal((await quote(pos1, "400")).body.rejected?.name, "WalletCapExceeded");
++ok("purchase over the 2% wallet cap rejected: WalletCapExceeded");
++assert.equal((await quote(big, "50000", 86_400, 5_000)).body.rejected?.name, "InsufficientCapital");
++ok("exceed-the-pool quote rejected: InsufficientCapital");
++assert.equal((await quote(pos0, "1001")).status, 400);
++ok("cover above the position's notional refused by the pricer");
+ 
+-const short = await call("/api/quote", { trader: me, direction: "short", amount: "200", duration: 3_600, rangeBps: 1_000 });
+-const id1 = String((await signSubmit(trader, short.body.tx)).result);
++const qs = await quote(shortPos, "60", 3_600, 1_000);
++const id1 = String((await signSubmit(trader, qs.body.tx)).result);
+ const p1 = (await call(`/api/protection?id=${id1}`)).body;
+ assert.equal(p1.direction, 1);
+ assert.ok(BigInt(p1.p_end) > BigInt(p1.p_start));
+ ok(`bought SHORT protection #${id1} covering a rise`);
+ 
+ const wd = await call("/api/tx", { action: "withdraw_request", source: me, amount: "1" });
+-assert.equal(wd.body.rejected?.name, "AuthRequired");
+-assert.deepEqual(wd.body.rejected.needs, [s0.config.admin]);
+-ok("non-admin withdrawal refused: contract requires the admin's signature");
++assert.deepEqual(wd.body.rejected?.needs, [s0.config.owner]);
++ok("withdrawal by a non-owner needs the owner's signature");
++assert.equal((await call("/api/tx", { action: "pause", source: me })).body.rejected?.name, "Unauthorized");
++ok("pause by a stranger rejected: Unauthorized");
++assert.equal((await call("/api/tx", { action: "settle_early", source: me, id: id0 })).body.rejected?.name, "NotClosed");
++ok("settle_early on an open position rejected: NotClosed");
+ 
+-await signSubmit(trader, (await call("/api/tx", { action: "release", source: me, id: id0 })).body.tx);
+-const s2 = await state(me);
+-assert.equal(BigInt(s1.state.reserved) - BigInt(s2.state.reserved), BigInt(125 * U) - BigInt(p1.max_payout));
+-assert.equal((await call("/api/tx", { action: "release", source: me, id: id0 })).body.rejected?.name, "AlreadyReleased");
+-ok(`released #${id0}; releasing again rejected: AlreadyReleased`);
++await tx("close", { positionId: pos0 });
++const pending: Promise<unknown>[] = [];
++await worker.scheduled({ cron: "* * * * *" }, env, { waitUntil: (p) => void pending.push(p) });
++await Promise.all(pending);
++const settled = (await call(`/api/protection?id=${id0}`)).body;
++assert.equal(settled.status, 1, JSON.stringify(settled));
++const s2 = await state();
++assert.equal(BigInt(s1.wallet.reserved) - BigInt(s2.wallet.reserved) + BigInt(p1.max_payout), BigInt(125 * U));
++ok(`closed the position; keeper settled #${id0} early, payout ${Number(settled.payout) / U}`);
+ 
+-await signSubmit(trader, (await call("/api/tx", { action: "deposit", source: me, amount: "100" })).body.tx);
+-assert.equal(BigInt((await state(me)).state.capital) - BigInt(s2.state.capital), BigInt(100 * U));
++await tx("deposit", { amount: "100" });
++assert.equal(BigInt((await state()).state.capital) - BigInt(s2.state.capital), BigInt(100 * U));
+ ok("deposit of 100 tUSDC increased pool capital");
+ 
+ for (const [path, body] of [
+-  ["/api/quote", { trader: me, direction: "long", amount: "abc", duration: 86_400, rangeBps: 2_500 }],
++  ["/api/quote", { positionId: pos1, amount: "abc", duration: 86_400, rangeBps: 2_500 }],
++  ["/api/quote", { positionId: "xyz", amount: "10", duration: 86_400, rangeBps: 2_500 }],
+   ["/api/tx", { action: "nuke", source: me }],
++  ["/api/tx", { action: "open", source: me, asset: "DOGE", direction: "long", notional: "10" }],
+   ["/api/tx", { action: "deposit", source: "not-an-address", amount: "1" }],
+ ] as const) {
+-  assert.equal((await call(path, body)).status, 400, path);
++  assert.equal((await call(path, body)).status, 400, `${path} ${JSON.stringify(body)}`);
+ }
+ assert.equal((await call("/api/protection?id=x")).status, 400);
+ ok("malformed requests return 400");
+diff --git a/pricer/scripts/publish-vol.ts b/pricer/scripts/publish-vol.ts
+new file mode 100644
+index 0000000..2a895fd
+--- /dev/null
++++ b/pricer/scripts/publish-vol.ts
+@@ -0,0 +1,26 @@
++// Bundles vol-tables/*.json into vol-bundle.json and prints its sha256. With --post, also records the
++// hash on-chain (set_vol_hash, signed by OPERATOR_SECRET) so partners can check /api/vol-tables.
++// Upload vol-bundle.json to the Worker's KV (key "vol-tables") before posting the hash.
++import { createHash } from "node:crypto";
++import { readFileSync, writeFileSync } from "node:fs";
++import { nativeToScVal } from "@stellar/stellar-sdk";
++import { invokeAs } from "../src/chain.ts";
++import { ASSETS } from "../src/service.ts";
++
++const file = (name: string) => new URL(`../${name}`, import.meta.url);
++const tables = Object.fromEntries(ASSETS.map((a) => [a, JSON.parse(readFileSync(file(`vol-tables/${a}.json`), "utf8"))]));
++const bundle = JSON.stringify(tables);
++writeFileSync(file("vol-bundle.json"), bundle);
++const hash = createHash("sha256").update(bundle).digest();
++console.log(hash.toString("hex"));
++
++if (process.argv.includes("--post")) {
++  const { RPC_URL, NETWORK_PASSPHRASE, VAULT_ID, OPERATOR_SECRET } = process.env;
++  if (!RPC_URL || !NETWORK_PASSPHRASE || !VAULT_ID || !OPERATOR_SECRET) {
++    throw new Error("--post needs RPC_URL, NETWORK_PASSPHRASE, VAULT_ID and OPERATOR_SECRET");
++  }
++  const n = { rpcUrl: RPC_URL, passphrase: NETWORK_PASSPHRASE };
++  const r = await invokeAs(n, OPERATOR_SECRET, VAULT_ID, "set_vol_hash", [nativeToScVal(hash)]);
++  console.log(`set_vol_hash ${r.status} ${r.hash}`);
++  if (r.status !== "SUCCESS") process.exit(1);
++}
+diff --git a/pricer/src/chain.ts b/pricer/src/chain.ts
+index e0633b8..5a2125e 100644
+--- a/pricer/src/chain.ts
++++ b/pricer/src/chain.ts
+@@ -28,11 +28,25 @@ export const ERRORS = [
+   "InsufficientCapital",
+   "WalletCapExceeded",
+   "NotFound",
+-  "AlreadyReleased",
++  "AlreadySettled",
+   "WithdrawalPending",
+   "NoWithdrawal",
+   "WithdrawalLocked",
+   "PaymentFailed",
++  "Paused",
++  "AssetDisabled",
++  "PerpdexNotAllowed",
++  "PositionMismatch",
++  "MarkMoved",
++  "PositionTooNew",
++  "AlreadyCovered",
++  "UtilizationCap",
++  "ConcentrationCap",
++  "NotExpired",
++  "NotClosed",
++  "OracleStale",
++  "Timelocked",
++  "NoChange",
+ ];
+ 
+ export class Rejected extends Error {
+@@ -109,3 +123,11 @@ export async function pay(n: Net, secret: string, asset: Asset, to: string, amou
+   tx.sign(kp);
+   return submit(n, tx.toXDR());
+ }
++
++/** Simulates, signs with `secret` (also the source account) and submits. Used by the keeper. */
++export async function invokeAs(n: Net, secret: string, contract: string, method: string, args: xdr.ScVal[]): Promise<Receipt> {
++  const kp = Keypair.fromSecret(secret);
++  const tx = TransactionBuilder.fromXDR(await prepareInvoke(n, kp.publicKey(), contract, method, args), n.passphrase);
++  tx.sign(kp);
++  return submit(n, tx.toXDR());
++}
+diff --git a/pricer/src/keeper.ts b/pricer/src/keeper.ts
+new file mode 100644
+index 0000000..ce1b9df
+--- /dev/null
++++ b/pricer/src/keeper.ts
+@@ -0,0 +1,51 @@
++// Settles protections on time. Anyone may call settle / settle_early; the keeper just makes sure
++// someone does. Runs every minute from the Worker's cron trigger.
++
++/** The vault `protection(id)` result after `scValToNative`. */
++export interface KeptProtection {
++  status: number;
++  t_expire: bigint;
++  perpdex: string;
++  position_id: Uint8Array;
++  qty: bigint;
++}
++
++export interface KeeperDeps {
++  now: () => number;
++  nextId: () => Promise<number>;
++  /** First id that may still be active; everything below it is settled. */
++  cursor: { get: () => Promise<number>; set: (id: number) => Promise<void> };
++  protection: (id: number) => Promise<KeptProtection | undefined>;
++  position: (perpdex: string, id: Uint8Array) => Promise<{ status: number; size: bigint } | undefined>;
++  call: (method: "settle" | "settle_early", id: number) => Promise<string>;
++  log: (msg: string) => void;
++}
++
++// ponytail: polls every active protection each minute; switch to PositionClosed events when
++// active protections number in the hundreds.
++export async function runKeeper(d: KeeperDeps): Promise<void> {
++  const [start, next] = await Promise.all([d.cursor.get(), d.nextId()]);
++  let first = start;
++  let prefixSettled = true;
++  for (let id = start; id < next; id++) {
++    const p = await d.protection(id);
++    if (!p || p.status !== 0) {
++      if (prefixSettled) first = id + 1;
++      continue;
++    }
++    prefixSettled = false;
++    try {
++      if (d.now() >= Number(p.t_expire)) {
++        d.log(`#${id} settle: ${await d.call("settle", id)}`);
++        continue;
++      }
++      const pos = await d.position(p.perpdex, p.position_id);
++      if (pos && (pos.status !== 0 || pos.size < p.qty)) {
++        d.log(`#${id} settle_early: ${await d.call("settle_early", id)}`);
++      }
++    } catch (e) {
++      d.log(`#${id} failed: ${(e as Error).message}`);
++    }
++  }
++  if (first !== start) await d.cursor.set(first);
++}
+diff --git a/pricer/src/market.ts b/pricer/src/market.ts
+new file mode 100644
+index 0000000..3354109
+--- /dev/null
++++ b/pricer/src/market.ts
+@@ -0,0 +1,52 @@
++// Market data for the vol-shock pause and the liquidity cap. Coinbase and Kraken both answer
++// from Cloudflare; Binance does not.
++import { YEAR_SECS } from "./pricing.ts";
++
++const COINBASE = "https://api.exchange.coinbase.com/products";
++const KRAKEN_PAIRS: Record<string, string> = { XLM: "XLMUSD", BTC: "XBTUSD", ETH: "ETHUSD" };
++const HEADERS = { headers: { "user-agent": "tosbi-pricer" } };
++/** Price move the liquidity cap prices against (spec R_ref). */
++const MOVE = 0.25;
++
++/** Annualized volatility of log returns between consecutive closes `stepSecs` apart. */
++export function realizedVol(closes: number[], stepSecs: number): number {
++  const r = closes.slice(1).map((c, i) => Math.log(c / closes[i]));
++  const mean = r.reduce((a, b) => a + b, 0) / r.length;
++  const variance = r.reduce((a, b) => a + (b - mean) ** 2, 0) / (r.length - 1);
++  return Math.sqrt(variance * (YEAR_SECS / stepSecs));
++}
++
++/** USD resting from the best level out to `move` away. `levels` are [price, size], best first. */
++export function bookDepth(levels: [number, number][], move: number, side: "bids" | "asks"): number {
++  if (levels.length === 0) return 0;
++  const limit = side === "bids" ? levels[0][0] * (1 - move) : levels[0][0] * (1 + move);
++  let usd = 0;
++  for (const [p, q] of levels) {
++    if (side === "bids" ? p < limit : p > limit) break;
++    usd += p * q;
++  }
++  return usd;
++}
++
++/** The last `count` + 1 closes, oldest first. */
++export async function recentCloses(asset: string, stepSecs: number, count: number): Promise<number[]> {
++  const res = await fetch(`${COINBASE}/${asset}-USD/candles?granularity=${stepSecs}`, HEADERS);
++  if (!res.ok) throw new Error(`coinbase candles ${asset}: HTTP ${res.status}`);
++  const rows = (await res.json()) as number[][];
++  return rows.slice(0, count + 1).reverse().map((row) => row[4]);
++}
++
++type Book = { bids: string[][]; asks: string[][] };
++const levels = (rows: string[][]) => rows.map(([p, q]) => [Number(p), Number(q)] as [number, number]);
++
++/** USDC needed to move `asset` 25% on Coinbase + Kraken, on whichever side is thinner. */
++export async function depthUsd(asset: string): Promise<number> {
++  const [cb, kr] = await Promise.all([
++    fetch(`${COINBASE}/${asset}-USD/book?level=2`, HEADERS).then((r) => r.json() as Promise<Book>),
++    fetch(`https://api.kraken.com/0/public/Depth?pair=${KRAKEN_PAIRS[asset]}&count=500`)
++      .then((r) => r.json() as Promise<{ result: Record<string, Book> }>)
++      .then((j) => Object.values(j.result)[0]),
++  ]);
++  const side = (s: "bids" | "asks") => bookDepth(levels(cb[s]), MOVE, s) + bookDepth(levels(kr[s]), MOVE, s);
++  return Math.min(side("bids"), side("asks"));
++}
+diff --git a/pricer/src/quote.ts b/pricer/src/quote.ts
+index 6a7a5b5..763d457 100644
+--- a/pricer/src/quote.ts
++++ b/pricer/src/quote.ts
+@@ -3,6 +3,9 @@ import type { Direction } from "./pricing.ts";
+ 
+ export interface Quote {
+   vault: string;
++  perpdex: string;
++  /** 32 bytes as 64 hex characters. */
++  position_id: string;
+   trader: string;
+   asset: string;
+   direction: Direction;
+@@ -22,6 +25,8 @@ export interface Quote {
+ 
+ const TYPES = {
+   vault: "address",
++  perpdex: "address",
++  position_id: "bytes",
+   trader: "address",
+   asset: "symbol",
+   direction: "u32",
+@@ -44,7 +49,10 @@ export function quoteToScVal(q: Quote): xdr.ScVal {
+   const keys = (Object.keys(TYPES) as (keyof Quote)[]).sort();
+   return xdr.ScVal.scvMap(
+     keys.map((k) => {
+-      const v = k === "direction" ? (q.direction === "long" ? 0 : 1) : q[k];
++      const v =
++        k === "direction" ? (q.direction === "long" ? 0 : 1)
++        : k === "position_id" ? Buffer.from(q.position_id, "hex")
++        : q[k];
+       return new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(k), val: nativeToScVal(v, { type: TYPES[k] }) });
+     }),
+   );
+diff --git a/pricer/src/service.ts b/pricer/src/service.ts
+index 28d7ebf..aaa5efe 100644
+--- a/pricer/src/service.ts
++++ b/pricer/src/service.ts
+@@ -1,23 +1,54 @@
+-import { StrKey } from "@stellar/stellar-sdk";
+ import { price, type Direction, type Price } from "./pricing.ts";
+ import { signQuote, type Quote } from "./quote.ts";
+ 
+ export const UNIT = 10_000_000n;
+ export const QUOTE_TTL_SECS = 30n;
++export const ASSETS = ["XLM", "BTC", "ETH"] as const;
+ const MAX_AMOUNT = 50_000n * UNIT;
++/** Liquidity cap (spec §4.3): an asset's max-payout exposure stays under κ × depth. */
++const KAPPA = 0.5;
++/** Buckets at or under this length pause during a volatility shock. */
++const SHOCK_PAUSE_MAX_SECS = 3_600;
+ 
+ export interface VolTable {
+   buckets: Record<string, { down: number; up: number }>;
+ }
+ 
++/** The PerpDEX `get_position` result after `scValToNative`. */
++export interface Position {
++  owner: string;
++  asset: string;
++  direction: number;
++  size: bigint;
++  mark_price: bigint;
++  status: number;
++}
++
++/** Set while realized volatility is far above the table: σ is multiplied by `factor` until `until`. */
++export interface Shock {
++  factor: number;
++  until: number;
++}
++
++export interface VaultState {
++  capital: bigint;
++  reserved: bigint;
++  locked: bigint;
++}
++
+ export interface Deps {
+   secret: string;
+   vault: string;
+-  volTable: VolTable;
++  perpdex: string;
++  volTables: Record<string, VolTable>;
+   now: () => bigint;
+   nonce: () => bigint;
+-  spot: () => Promise<number>;
+-  vaultState: () => Promise<{ capital: bigint; reserved: bigint }>;
++  position: (id: string) => Promise<Position>;
++  vaultState: () => Promise<VaultState>;
++  exposure: (asset: string, dir: Direction) => Promise<bigint>;
++  /** USDC needed to move the asset 25%; null when not estimated yet. */
++  depth: (asset: string) => Promise<number | null>;
++  shock: (asset: string) => Promise<Shock | null>;
+ }
+ 
+ export class BadRequest extends Error {}
+@@ -27,7 +58,7 @@ export interface SignedQuote {
+   quote: Quote;
+   xdr: string;
+   signature: string;
+-  breakdown: Price & { sigma: number; utilization: number };
++  breakdown: Price & { sigma: number; utilization: number; concentration: number };
+ }
+ 
+ export function parseUnits(s: unknown): bigint {
+@@ -37,42 +68,68 @@ export function parseUnits(s: unknown): bigint {
+ }
+ 
+ export async function makeQuote(input: Record<string, unknown>, d: Deps): Promise<SignedQuote> {
+-  const { trader, direction, duration, rangeBps } = input;
+-  if (typeof trader !== "string" || !(StrKey.isValidEd25519PublicKey(trader) || StrKey.isValidContract(trader))) {
+-    throw new BadRequest("trader must be a Stellar address");
++  const { positionId, duration, rangeBps } = input;
++  if (typeof positionId !== "string" || !/^[0-9a-f]{64}$/.test(positionId)) {
++    throw new BadRequest("positionId must be 64 lowercase hex characters");
+   }
+-  if (direction !== "long" && direction !== "short") throw new BadRequest("direction must be long or short");
+-  const bucket = d.volTable.buckets[String(duration)];
+-  if (!bucket) throw new BadRequest(`duration must be one of ${Object.keys(d.volTable.buckets).join(", ")} seconds`);
++  if (!Number.isInteger(duration)) throw new BadRequest("duration must be an integer number of seconds");
+   if (!Number.isInteger(rangeBps) || (rangeBps as number) < 500 || (rangeBps as number) > 5_000) {
+     throw new BadRequest("rangeBps must be an integer from 500 to 5000");
+   }
+   const amount = parseUnits(input.amount);
+   if (amount <= 0n || amount > MAX_AMOUNT) throw new BadRequest("amount must be > 0 and <= 50000");
+ 
+-  let spot: number;
+-  let vault: { capital: bigint; reserved: bigint };
++  let pos: Position;
++  let vault: VaultState;
+   try {
+-    [spot, vault] = await Promise.all([d.spot(), d.vaultState()]);
++    [pos, vault] = await Promise.all([d.position(positionId), d.vaultState()]);
+   } catch (e) {
+-    throw new Upstream(`price or vault state unavailable: ${(e as Error).message}`);
++    throw new Upstream(`position or vault state unavailable: ${(e as Error).message}`);
+   }
+-  if (!Number.isFinite(spot) || spot <= 0) throw new Upstream("price feed returned an invalid price");
++  if (pos.status !== 0) throw new BadRequest("position is not open");
++  const asset = pos.asset;
++  const bucket = d.volTables[asset]?.buckets[String(duration)];
++  if (!bucket) throw new BadRequest(`no ${duration}s protection for ${asset}`);
++  const pStart = pos.mark_price;
++  if (pStart <= 0n) throw new Upstream("position has no mark price");
++  if (amount * UNIT > pos.size * pStart) throw new BadRequest("amount exceeds the position's notional");
+ 
+-  const dir = direction as Direction;
++  const dir: Direction = pos.direction === 0 ? "long" : "short";
++  const now = d.now();
++  let side: bigint, other: bigint, depth: number | null, shock: Shock | null;
++  try {
++    [side, other, depth, shock] = await Promise.all([
++      d.exposure(asset, dir),
++      d.exposure(asset, dir === "long" ? "short" : "long"),
++      d.depth(asset),
++      d.shock(asset),
++    ]);
++  } catch (e) {
++    throw new Upstream(`risk state unavailable: ${(e as Error).message}`);
++  }
++  const shocked = shock !== null && shock.until > Number(now);
++  if (shocked && Number(duration) <= SHOCK_PAUSE_MAX_SECS) {
++    throw new Upstream(`${asset} volatility spike: covers of 1 hour or less are paused for up to 15 minutes`);
++  }
+   const r = BigInt(rangeBps as number);
+-  const pStart = BigInt(Math.round(spot * 1e7));
+   const maxPayout = (amount * r) / 10_000n;
+-  const sigma = dir === "long" ? bucket.down : bucket.up;
+-  const utilization = vault.capital > 0n ? Number(vault.reserved + maxPayout) / Number(vault.capital) : Infinity;
+-  // ponytail: concentration loading off until per-(asset, direction) reserves land on-chain (Instaward 3)
+-  const p = price(dir, Number(amount) / 1e7, Number(r) / 10_000, sigma, Number(duration), utilization, 0);
+-  const now = d.now();
++  if (depth !== null && Number(side + other + maxPayout) / 1e7 > KAPPA * depth) {
++    throw new BadRequest(`${asset} liquidity cap reached`);
++  }
++
++  const available = vault.capital - vault.locked;
++  const share = (x: bigint) => (available > 0n ? Number(x) / Number(available) : Infinity);
++  const utilization = share(vault.reserved + maxPayout);
++  const concentration = share(side + maxPayout);
++  const sigma = (dir === "long" ? bucket.down : bucket.up) * (shocked ? shock!.factor : 1);
++  const p = price(dir, Number(amount) / 1e7, Number(r) / 10_000, sigma, Number(duration), utilization, concentration);
+ 
+   const quote: Quote = {
+     vault: d.vault,
+-    trader,
+-    asset: "XLM",
++    perpdex: d.perpdex,
++    position_id: positionId,
++    trader: pos.owner,
++    asset,
+     direction: dir,
+     amount,
+     qty: (amount * UNIT) / pStart,
+@@ -87,7 +144,7 @@ export async function makeQuote(input: Record<string, unknown>, d: Deps): Promis
+     expires_at: now + QUOTE_TTL_SECS,
+     nonce: d.nonce(),
+   };
+-  return { quote, ...signQuote(quote, d.secret), breakdown: { ...p, sigma, utilization } };
++  return { quote, ...signQuote(quote, d.secret), breakdown: { ...p, sigma, utilization, concentration } };
+ }
+ 
+ export function randomNonce(): bigint {
+diff --git a/pricer/src/worker.ts b/pricer/src/worker.ts
+index bc99744..895f077 100644
+--- a/pricer/src/worker.ts
++++ b/pricer/src/worker.ts
+@@ -1,24 +1,46 @@
+ import { Address, Asset, nativeToScVal, StrKey, xdr } from "@stellar/stellar-sdk";
+-import volTable from "../vol-table.json" with { type: "json" };
+-import { pay, prepareInvoke, prepareTrust, read, Rejected, submit, type Net } from "./chain.ts";
+-import { BadRequest, makeQuote, parseUnits, randomNonce, Upstream } from "./service.ts";
++import XLM from "../vol-tables/XLM.json" with { type: "json" };
++import BTC from "../vol-tables/BTC.json" with { type: "json" };
++import ETH from "../vol-tables/ETH.json" with { type: "json" };
++import { invokeAs, pay, prepareInvoke, prepareTrust, read, Rejected, submit, type Net } from "./chain.ts";
++import { runKeeper, type KeptProtection } from "./keeper.ts";
++import { depthUsd, realizedVol, recentCloses } from "./market.ts";
++import {
++  ASSETS,
++  BadRequest,
++  makeQuote,
++  parseUnits,
++  randomNonce,
++  UNIT,
++  Upstream,
++  type Position,
++  type Shock,
++  type VaultState,
++  type VolTable,
++} from "./service.ts";
++
++/** The subset of Workers KV this code uses. */
++export interface KV {
++  get(key: string): Promise<string | null>;
++  put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
++}
+ 
+ interface Env {
+   RPC_URL: string;
+   NETWORK_PASSPHRASE: string;
+   VAULT_ID: string;
++  PERPDEX_ID: string;
+   ASSET_CODE: string;
+   ASSET_ISSUER: string;
+   PRICER_SECRET: string;
+   FAUCET_SECRET: string;
++  KEEPER_SECRET: string;
++  KV: KV;
+ }
+ 
+-// Binance blocks Cloudflare egress, so it is the last resort.
+-const SPOT_SOURCES: [string, (j: any) => string][] = [
+-  ["https://api.coinbase.com/v2/prices/XLM-USD/spot", (j) => j.data.amount],
+-  ["https://api.kraken.com/0/public/Ticker?pair=XLMUSD", (j) => j.result.XXLMZUSD.c[0]],
+-  ["https://data-api.binance.vision/api/v3/ticker/price?symbol=XLMUSDT", (j) => j.price],
+-];
++const BUNDLED: Record<string, VolTable> = { XLM, BTC, ETH };
++const DAILY = "0 0 * * *";
++const SHOCK_SECS = 900;
+ const FAUCET_AMOUNT = "1000";
+ 
+ const json = (body: unknown, status = 200) =>
+@@ -27,7 +49,12 @@ const json = (body: unknown, status = 200) =>
+     headers: { "content-type": "application/json" },
+   });
+ 
++const net = (env: Env): Net => ({ rpcUrl: env.RPC_URL, passphrase: env.NETWORK_PASSPHRASE });
+ const i128 = (amount: unknown) => nativeToScVal(parseUnits(amount), { type: "i128" });
++const sym = (s: string) => nativeToScVal(s, { type: "symbol" });
++const u32 = (n: number) => nativeToScVal(n, { type: "u32" });
++const u64 = (n: bigint | number) => nativeToScVal(BigInt(n), { type: "u64" });
++const oracleAsset = (a: string) => xdr.ScVal.scvVec([xdr.ScVal.scvSymbol("Other"), xdr.ScVal.scvSymbol(a)]);
+ 
+ function account(a: unknown): string {
+   if (typeof a !== "string" || !StrKey.isValidEd25519PublicKey(a)) throw new BadRequest("expected a Stellar G... address");
+@@ -35,24 +62,38 @@ function account(a: unknown): string {
+ }
+ const addr = (a: unknown) => new Address(account(a)).toScVal();
+ 
+-function u64(id: unknown) {
+-  if (typeof id !== "string" || !/^\d{1,19}$/.test(id)) throw new BadRequest("id must be a non-negative integer");
+-  return nativeToScVal(BigInt(id), { type: "u64" });
++function id(v: unknown) {
++  if (typeof v !== "string" || !/^\d{1,19}$/.test(v)) throw new BadRequest("id must be a non-negative integer");
++  return u64(BigInt(v));
+ }
+ 
+-async function spot(): Promise<number> {
+-  const failures: string[] = [];
+-  for (const [url, pick] of SPOT_SOURCES) {
+-    try {
+-      const res = await fetch(url);
+-      const price = res.ok ? Number(pick(await res.json())) : NaN;
+-      if (price > 0) return price;
+-      failures.push(`${new URL(url).host} ${res.status}`);
+-    } catch (e) {
+-      failures.push(`${new URL(url).host} ${(e as Error).message}`);
+-    }
+-  }
+-  throw new Error(`no price source reachable (${failures.join(", ")})`);
++function positionId(v: unknown) {
++  if (typeof v !== "string" || !/^[0-9a-f]{64}$/.test(v)) throw new BadRequest("positionId must be 64 lowercase hex characters");
++  return nativeToScVal(Buffer.from(v, "hex"));
++}
++
++function asset(a: unknown): string {
++  if (typeof a !== "string" || !(ASSETS as readonly string[]).includes(a)) throw new BadRequest(`asset must be one of ${ASSETS.join(", ")}`);
++  return a;
++}
++
++function direction(d: unknown): number {
++  if (d !== "long" && d !== "short") throw new BadRequest("direction must be long or short");
++  return d === "long" ? 0 : 1;
++}
++
++/** The KV copy published by scripts/publish-vol.ts, else the tables bundled at deploy. */
++async function volTables(env: Env): Promise<{ raw: string; tables: Record<string, VolTable> }> {
++  const raw = (await env.KV.get("vol-tables")) ?? JSON.stringify(BUNDLED);
++  return { raw, tables: JSON.parse(raw) };
++}
++
++/** Latest oracle price for `a`, 7 decimals. */
++async function oraclePrice(n: Net, env: Env, a: string): Promise<bigint> {
++  const { oracle } = (await read(n, env.VAULT_ID, "config")) as { oracle: string };
++  const [last, decimals] = await Promise.all([read(n, oracle, "lastprice", [oracleAsset(a)]), read(n, oracle, "decimals")]);
++  if (!last) throw new Upstream(`no oracle price for ${a}`);
++  return (last as { price: bigint }).price / 10n ** BigInt((decimals as number) - 7);
+ }
+ 
+ async function balance(n: Net, token: string, who: string): Promise<bigint | null> {
+@@ -63,11 +104,38 @@ async function balance(n: Net, token: string, who: string): Promise<bigint | nul
+   }
+ }
+ 
++type Call = () => Promise<[contract: string, method: string, args: xdr.ScVal[]]>;
++
++function txCalls(n: Net, env: Env, source: string, body: Record<string, unknown>): Record<string, Call> {
++  const V = env.VAULT_ID;
++  const P = env.PERPDEX_ID;
++  return {
++    deposit: async () => [V, "deposit_capital", [addr(source), i128(body.amount)]],
++    open: async () => {
++      const a = asset(body.asset);
++      const size = (parseUnits(body.notional) * UNIT) / (await oraclePrice(n, env, a));
++      return [P, "open", [addr(source), sym(a), u32(direction(body.direction)), nativeToScVal(size, { type: "i128" })]];
++    },
++    close: async () => [P, "close", [positionId(body.positionId), body.price ? i128(body.price) : xdr.ScVal.scvVoid()]],
++    liquidate: async () => [P, "liquidate", [positionId(body.positionId), xdr.ScVal.scvVoid()]],
++    reduce: async () => {
++      const pos = (await read(n, P, "get_position", [positionId(body.positionId)])) as Position;
++      return [P, "reduce", [positionId(body.positionId), nativeToScVal(pos.size / 2n, { type: "i128" })]];
++    },
++    settle: async () => [V, "settle", [id(body.id)]],
++    settle_early: async () => [V, "settle_early", [id(body.id)]],
++    withdraw_request: async () => [V, "withdraw_request", [i128(body.amount)]],
++    withdraw_execute: async () => [V, "withdraw_execute", []],
++    pause: async () => [V, "pause", [addr(source)]],
++  };
++}
++
+ async function route(req: Request, env: Env): Promise<Response> {
+-  const n: Net = { rpcUrl: env.RPC_URL, passphrase: env.NETWORK_PASSPHRASE };
+-  const asset = new Asset(env.ASSET_CODE, env.ASSET_ISSUER);
+-  const token = asset.contractId(env.NETWORK_PASSPHRASE);
+-  const path = new URL(req.url).pathname;
++  const n = net(env);
++  const usdc = new Asset(env.ASSET_CODE, env.ASSET_ISSUER);
++  const token = usdc.contractId(env.NETWORK_PASSPHRASE);
++  const url = new URL(req.url);
++  const path = url.pathname;
+   const body: Record<string, unknown> =
+     req.method === "POST"
+       ? await req.json().catch(() => {
+@@ -76,29 +144,56 @@ async function route(req: Request, env: Env): Promise<Response> {
+       : {};
+ 
+   if (path === "/api/state") {
+-    const q = new URL(req.url).searchParams.get("addr");
++    const q = url.searchParams.get("addr");
+     const who = q ? account(q) : null;
+-    const [state, config] = await Promise.all([read(n, env.VAULT_ID, "state"), read(n, env.VAULT_ID, "config")]);
++    const pairs = ASSETS.flatMap((a) => [0, 1].map((d) => [a, d] as const));
++    const [state, config, paused, nextId, ...exposures] = await Promise.all([
++      read(n, env.VAULT_ID, "state"),
++      read(n, env.VAULT_ID, "config"),
++      read(n, env.VAULT_ID, "paused"),
++      read(n, env.VAULT_ID, "next_id"),
++      ...pairs.map(([a, d]) => read(n, env.VAULT_ID, "exposure", [sym(a), u32(d)])),
++    ]);
++    const exposure = Object.fromEntries(ASSETS.map((a, i) => [a, { long: exposures[2 * i], short: exposures[2 * i + 1] }]));
+     const wallet = who
+       ? { balance: await balance(n, token, who), reserved: await read(n, env.VAULT_ID, "wallet_reserved", [addr(who)]) }
+       : null;
+     const assetInfo = { code: env.ASSET_CODE, issuer: env.ASSET_ISSUER, contract: token };
+-    return json({ state, config, wallet, asset: assetInfo, vault: env.VAULT_ID, network: env.NETWORK_PASSPHRASE });
++    return json({ state, config, paused, nextId, exposure, wallet, asset: assetInfo, vault: env.VAULT_ID, perpdex: env.PERPDEX_ID, network: env.NETWORK_PASSPHRASE });
+   }
+ 
+   if (path === "/api/protection") {
+-    return json(await read(n, env.VAULT_ID, "protection", [u64(new URL(req.url).searchParams.get("id"))]));
++    return json(await read(n, env.VAULT_ID, "protection", [id(url.searchParams.get("id"))]));
++  }
++
++  if (path === "/api/position") {
++    return json(await read(n, env.PERPDEX_ID, "get_position", [positionId(url.searchParams.get("id"))]));
++  }
++
++  if (path === "/api/vol-tables") {
++    return new Response((await volTables(env)).raw, { headers: { "content-type": "application/json" } });
+   }
+ 
+   if (path === "/api/quote") {
++    const { tables } = await volTables(env);
+     const q = await makeQuote(body, {
+       secret: env.PRICER_SECRET,
+       vault: env.VAULT_ID,
+-      volTable,
++      perpdex: env.PERPDEX_ID,
++      volTables: tables,
+       now: () => BigInt(Math.floor(Date.now() / 1000)),
+       nonce: randomNonce,
+-      spot,
+-      vaultState: async () => (await read(n, env.VAULT_ID, "state")) as { capital: bigint; reserved: bigint },
++      position: async (pid) => (await read(n, env.PERPDEX_ID, "get_position", [positionId(pid)])) as Position,
++      vaultState: async () => (await read(n, env.VAULT_ID, "state")) as VaultState,
++      exposure: async (a, dir) => (await read(n, env.VAULT_ID, "exposure", [sym(a), u32(dir === "long" ? 0 : 1)])) as bigint,
++      depth: async (a) => {
++        const v = await env.KV.get(`depth:${a}`);
++        return v === null ? null : Number(v);
++      },
++      shock: async (a) => {
++        const v = await env.KV.get(`shock:${a}`);
++        return v === null ? null : (JSON.parse(v) as Shock);
++      },
+     });
+     const args = [xdr.ScVal.fromXDR(q.xdr, "base64"), nativeToScVal(Buffer.from(q.signature, "hex"))];
+     const shown = { quote: q.quote, breakdown: q.breakdown, signature: q.signature };
+@@ -113,16 +208,11 @@ async function route(req: Request, env: Env): Promise<Response> {
+   if (path === "/api/tx") {
+     const action = String(body.action);
+     const source = account(body.source);
+-    if (action === "trust") return json({ tx: await prepareTrust(n, source, asset) });
+-    const call: Record<string, () => [string, xdr.ScVal[]]> = {
+-      deposit: () => ["deposit_capital", [addr(source), i128(body.amount)]],
+-      release: () => ["release", [addr(source), u64(body.id)]],
+-      withdraw_request: () => ["withdraw_request", [i128(body.amount)]],
+-      withdraw_execute: () => ["withdraw_execute", []],
+-    };
+-    if (!Object.hasOwn(call, action)) throw new BadRequest("unknown action");
+-    const [method, args] = call[action]();
+-    return json({ tx: await prepareInvoke(n, source, env.VAULT_ID, method, args) });
++    if (action === "trust") return json({ tx: await prepareTrust(n, source, usdc) });
++    const calls = txCalls(n, env, source, body);
++    if (!Object.hasOwn(calls, action)) throw new BadRequest("unknown action");
++    const [contract, method, args] = await calls[action]();
++    return json({ tx: await prepareInvoke(n, source, contract, method, args) });
+   }
+ 
+   if (path === "/api/submit") {
+@@ -135,12 +225,49 @@ async function route(req: Request, env: Env): Promise<Response> {
+     const bal = await balance(n, token, to);
+     if (bal === null) throw new BadRequest(`add a trustline to ${env.ASSET_CODE} first`);
+     if (bal >= parseUnits(FAUCET_AMOUNT)) throw new BadRequest(`you already hold ${FAUCET_AMOUNT}+ ${env.ASSET_CODE}`);
+-    return json(await pay(n, env.FAUCET_SECRET, asset, to, FAUCET_AMOUNT));
++    return json(await pay(n, env.FAUCET_SECRET, usdc, to, FAUCET_AMOUNT));
+   }
+ 
+   return json({ error: "not found" }, 404);
+ }
+ 
++export async function keep(env: Env): Promise<void> {
++  const n = net(env);
++  await runKeeper({
++    now: () => Math.floor(Date.now() / 1000),
++    nextId: async () => Number(await read(n, env.VAULT_ID, "next_id")),
++    cursor: {
++      get: async () => Number((await env.KV.get("keeper:cursor")) ?? 0),
++      set: (next) => env.KV.put("keeper:cursor", String(next)),
++    },
++    protection: async (pid) => (await read(n, env.VAULT_ID, "protection", [u64(pid)])) as KeptProtection | undefined,
++    position: async (perpdex, pos) => (await read(n, perpdex, "get_position", [nativeToScVal(Buffer.from(pos))])) as Position | undefined,
++    call: async (method, pid) => (await invokeAs(n, env.KEEPER_SECRET, env.VAULT_ID, method, [u64(pid)])).status,
++    log: (msg) => console.log(`keeper ${msg}`),
++  });
++}
++
++/** Spec §6 vol-shock: realized 1h vol above 2× the table's 1h σ bumps σ and pauses ≤ 1h covers for 15 min. */
++async function watchVol(env: Env): Promise<void> {
++  const { tables } = await volTables(env);
++  const now = Math.floor(Date.now() / 1000);
++  await Promise.all(
++    ASSETS.map(async (a) => {
++      const hour = tables[a].buckets["3600"];
++      const sigma = Math.max(hour.down, hour.up);
++      const realized = realizedVol(await recentCloses(a, 60, 60), 60);
++      if (realized <= 2 * sigma) return;
++      const shock: Shock = { factor: realized / sigma, until: now + SHOCK_SECS };
++      await env.KV.put(`shock:${a}`, JSON.stringify(shock), { expirationTtl: SHOCK_SECS });
++      console.log(`vol shock ${a}: realized ${realized.toFixed(2)} vs table ${sigma}`);
++    }),
++  );
++}
++
++async function refreshDepth(env: Env): Promise<void> {
++  await Promise.all(ASSETS.map(async (a) => env.KV.put(`depth:${a}`, String(Math.round(await depthUsd(a))))));
++}
++
+ export default {
+   async fetch(req: Request, env: Env): Promise<Response> {
+     try {
+@@ -154,4 +281,13 @@ export default {
+       return json({ error: msg }, 500);
+     }
+   },
++
++  async scheduled(event: { cron: string }, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
++    const log = (what: string) => (e: unknown) => console.log(`${what} failed: ${(e as Error).message}`);
++    if (event.cron === DAILY) {
++      ctx.waitUntil(refreshDepth(env).catch(log("depth")));
++      return;
++    }
++    ctx.waitUntil(Promise.all([keep(env).catch(log("keeper")), watchVol(env).catch(log("vol watch"))]));
++  },
+ };
+diff --git a/pricer/test/keeper.test.ts b/pricer/test/keeper.test.ts
+new file mode 100644
+index 0000000..eb24df9
+--- /dev/null
++++ b/pricer/test/keeper.test.ts
+@@ -0,0 +1,69 @@
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { runKeeper, type KeeperDeps, type KeptProtection } from "../src/keeper.ts";
++
++const prot = (over: Partial<KeptProtection> = {}): KeptProtection => ({
++  status: 0,
++  t_expire: 2_000n,
++  perpdex: "C_DEX",
++  position_id: new Uint8Array(32),
++  qty: 100n,
++  ...over,
++});
++
++function harness(prots: (KeptProtection | undefined)[], positions: Record<number, { status: number; size: bigint }> = {}) {
++  const calls: string[] = [];
++  let cursor = 0;
++  const d: KeeperDeps = {
++    now: () => 1_500,
++    nextId: async () => prots.length,
++    cursor: { get: async () => cursor, set: async (n) => void (cursor = n) },
++    protection: async (id) => prots[id],
++    position: async (_dex, pid) => positions[pid[31]] ?? { status: 0, size: 100n },
++    call: async (method, id) => {
++      calls.push(`${method} ${id}`);
++      if (id === 99) throw new Error("boom");
++      return "SUCCESS";
++    },
++    log: () => {},
++  };
++  return { d, calls, cursor: () => cursor };
++}
++
++test("settles expired protections and early-settles closed or reduced positions", async () => {
++  const pid = (n: number) => Object.assign(new Uint8Array(32), { [31]: n });
++  const h = harness(
++    [prot({ t_expire: 1_000n }), prot({ position_id: pid(1) }), prot({ position_id: pid(2) }), prot()],
++    { 1: { status: 1, size: 100n }, 2: { status: 0, size: 99n } },
++  );
++  await runKeeper(h.d);
++  assert.deepEqual(h.calls, ["settle 0", "settle_early 1", "settle_early 2"]);
++});
++
++test("cursor skips the settled prefix and stops at the first active id", async () => {
++  const h = harness([prot({ status: 1 }), undefined, prot(), prot({ status: 1 })]);
++  await runKeeper(h.d);
++  assert.equal(h.cursor(), 2);
++  assert.deepEqual(h.calls, []);
++});
++
++test("one failed call does not stop the rest", async () => {
++  const prots = Array.from({ length: 101 }, () => prot({ status: 1 }));
++  prots[99] = prot({ t_expire: 1_000n });
++  prots[100] = prot({ t_expire: 1_000n });
++  const h = harness(prots);
++  await runKeeper(h.d);
++  assert.deepEqual(h.calls, ["settle 99", "settle 100"]);
++});
++
++test("a failed position read is logged and the next protection is still handled", async () => {
++  const h = harness([prot(), prot({ t_expire: 1_000n })]);
++  const logs: string[] = [];
++  h.d.position = async () => {
++    throw new Error("rpc down");
++  };
++  h.d.log = (m) => logs.push(m);
++  await runKeeper(h.d);
++  assert.deepEqual(h.calls, ["settle 1"]);
++  assert.ok(logs.some((m) => m.includes("#0 failed: rpc down")));
++});
+diff --git a/pricer/test/market.test.ts b/pricer/test/market.test.ts
+new file mode 100644
+index 0000000..1545cc3
+--- /dev/null
++++ b/pricer/test/market.test.ts
+@@ -0,0 +1,21 @@
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { bookDepth, realizedVol } from "../src/market.ts";
++import { YEAR_SECS } from "../src/pricing.ts";
++
++test("realizedVol annualizes the stdev of log returns", () => {
++  assert.equal(realizedVol([1, 1, 1, 1], 60), 0);
++  // returns +r, −r, +r, −r: stdev = r·√(4/3)
++  const r = 0.01;
++  const closes = [1, Math.exp(r), 1, Math.exp(r), 1];
++  const expected = r * Math.sqrt(4 / 3) * Math.sqrt(YEAR_SECS / 60);
++  assert.ok(Math.abs(realizedVol(closes, 60) - expected) < 1e-9);
++});
++
++test("bookDepth sums notional out to the move and stops past it", () => {
++  const bids: [number, number][] = [[100, 1], [90, 2], [76, 5], [74, 100]];
++  assert.equal(bookDepth(bids, 0.25, "bids"), 100 + 180 + 380);
++  const asks: [number, number][] = [[100, 1], [125, 2], [126, 100]];
++  assert.equal(bookDepth(asks, 0.25, "asks"), 100 + 250);
++  assert.equal(bookDepth([], 0.25, "asks"), 0);
++});
+diff --git a/pricer/test/quote.test.ts b/pricer/test/quote.test.ts
+index 75803e0..a37e2a4 100644
+--- a/pricer/test/quote.test.ts
++++ b/pricer/test/quote.test.ts
+@@ -6,6 +6,8 @@ import { signQuote, type Quote } from "../src/quote.ts";
+ // Mirrored in contracts/protection/src/test.rs (h5_js_signed_quote_is_accepted).
+ const FIXTURE: Quote = {
+   vault: StrKey.encodeContract(Buffer.alloc(32, 1)),
++  perpdex: StrKey.encodeContract(Buffer.alloc(32, 3)),
++  position_id: "00".repeat(32),
+   trader: StrKey.encodeContract(Buffer.alloc(32, 2)),
+   asset: "XLM",
+   direction: "long",
+@@ -24,9 +26,9 @@ const FIXTURE: Quote = {
+ };
+ const SECRET = Keypair.fromRawEd25519Seed(Buffer.alloc(32, 7)).secret();
+ const XDR_HEX =
+-  "0000001100000001000000100000000f00000006616d6f756e7400000000000a000000000000000000000002540be4000000000f0000000561737365740000000000000f00000003584c4d000000000f00000009646972656374696f6e00000000000003000000000000000f000000086475726174696f6e0000000500000000000151800000000f0000000a657870697265735f617400000000000500000000000f425e0000000f00000003666565000000000a00000000000000000000000001c9c3800000000f0000000a6d61785f7061796f757400000000000a0000000000000000000000009502f9000000000f000000056e6f6e636500000000000005000000000000002a0000000f00000005705f656e640000000000000a0000000000000000000000000016e3600000000f00000007705f7374617274000000000a000000000000000000000000001e84800000000f000000077072656d69756d000000000a0000000000000000000000000f485a800000000f00000003717479000000000a00000000000000000000000ba43b74000000000f0000000971756f7465645f61740000000000000500000000000f42400000000f000000067472616465720000000000120000000102020202020202020202020202020202020202020202020202020202020202020000000f000000057661756c74000000000000120000000101010101010101010101010101010101010101010101010101010101010101010000000f00000007766f6c5f627073000000000300002710";
++  "0000001100000001000000120000000f00000006616d6f756e7400000000000a000000000000000000000002540be4000000000f0000000561737365740000000000000f00000003584c4d000000000f00000009646972656374696f6e00000000000003000000000000000f000000086475726174696f6e0000000500000000000151800000000f0000000a657870697265735f617400000000000500000000000f425e0000000f00000003666565000000000a00000000000000000000000001c9c3800000000f0000000a6d61785f7061796f757400000000000a0000000000000000000000009502f9000000000f000000056e6f6e636500000000000005000000000000002a0000000f00000005705f656e640000000000000a0000000000000000000000000016e3600000000f00000007705f7374617274000000000a000000000000000000000000001e84800000000f000000077065727064657800000000120000000103030303030303030303030303030303030303030303030303030303030303030000000f0000000b706f736974696f6e5f6964000000000d0000002000000000000000000000000000000000000000000000000000000000000000000000000f000000077072656d69756d000000000a0000000000000000000000000f485a800000000f00000003717479000000000a00000000000000000000000ba43b74000000000f0000000971756f7465645f61740000000000000500000000000f42400000000f000000067472616465720000000000120000000102020202020202020202020202020202020202020202020202020202020202020000000f000000057661756c74000000000000120000000101010101010101010101010101010101010101010101010101010101010101010000000f00000007766f6c5f627073000000000300002710";
+ const SIG =
+-  "dddebb2eabfc3881b728e2430be21fa3980269dad817bc61925049820dee0ba92bfeced96055fe290b163a0d0e3005e38300f5246a96deae8f22b1ae230bc903";
++  "b5bd05b88444d81275d85ddb031c58294b11b2cabe10de94165733bed93c218c88a456ebf6d4eb925dd2b2ba07e66f79229c17839d9ff8317ce3c22a2be3e90e";
+ 
+ test("H5: signature over canonical quote XDR matches the Rust fixture", () => {
+   const { xdr, signature } = signQuote(FIXTURE, SECRET);
+diff --git a/pricer/test/service.test.ts b/pricer/test/service.test.ts
+index f038aa8..a9cd73a 100644
+--- a/pricer/test/service.test.ts
++++ b/pricer/test/service.test.ts
+@@ -1,71 +1,108 @@
+ import { test } from "node:test";
+ import assert from "node:assert/strict";
+ import { Keypair } from "@stellar/stellar-sdk";
+-import { BadRequest, makeQuote, Upstream, UNIT, type Deps } from "../src/service.ts";
++import { BadRequest, makeQuote, Upstream, UNIT, type Deps, type Position } from "../src/service.ts";
+ 
+ const kp = Keypair.random();
+-const trader = Keypair.random().publicKey();
++const owner = Keypair.random().publicKey();
++const POS = "ab".repeat(32);
++const position = (over: Partial<Position> = {}): Position => ({
++  owner,
++  asset: "XLM",
++  direction: 0,
++  size: 5_000n * UNIT,
++  mark_price: 2_000_000n,
++  status: 0,
++  ...over,
++});
+ const deps = (over: Partial<Deps> = {}): Deps => ({
+   secret: kp.secret(),
+   vault: "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526",
+-  volTable: { buckets: { "86400": { down: 1.0, up: 0.9 } } },
++  perpdex: "CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3",
++  volTables: { XLM: { buckets: { "3600": { down: 0.7, up: 0.7 }, "86400": { down: 1.0, up: 0.9 } } } },
+   now: () => 1_000n,
+   nonce: () => 7n,
+-  spot: async () => 0.2,
+-  vaultState: async () => ({ capital: 500_000n * UNIT, reserved: 249_750n * UNIT }),
++  position: async () => position(),
++  vaultState: async () => ({ capital: 500_000n * UNIT, reserved: 249_750n * UNIT, locked: 0n }),
++  exposure: async (_a, dir) => (dir === "long" ? 99_750n * UNIT : 0n),
++  depth: async () => null,
++  shock: async () => null,
+   ...over,
+ });
+-const req = { trader, direction: "long", amount: "1000", duration: 86_400, rangeBps: 2_500 };
++const req = { positionId: POS, amount: "1000", duration: 86_400, rangeBps: 2_500 };
+ 
+-test("quote matches spec §10.1 terms and verifies under the pricer key", async () => {
++test("quote reproduces spec §10.1 from the position's mark and on-chain exposure", async () => {
+   const q = await makeQuote(req, deps());
++  assert.equal(q.quote.trader, owner);
++  assert.equal(q.quote.position_id, POS);
+   assert.equal(q.quote.p_start, 2_000_000n);
+   assert.equal(q.quote.p_end, 1_500_000n);
+   assert.equal(q.quote.qty, 5_000n * UNIT);
+   assert.equal(q.quote.max_payout, 250n * UNIT);
+   assert.equal(q.quote.fee, 3n * UNIT);
+   assert.equal(q.quote.expires_at, 1_030n);
+-  assert.equal(q.quote.vol_bps, 10_000);
+   assert.equal(q.breakdown.utilization, 0.5);
+-  assert.ok(Math.abs(Number(q.quote.premium) / 1e7 - 20.87 * 1.125 * 1.05) < 0.01);
++  assert.equal(q.breakdown.concentration, 0.2);
++  assert.ok(Math.abs(Number(q.quote.premium) / 1e7 - 25.64) < 0.01);
+   assert.ok(kp.verify(Buffer.from(q.xdr, "base64"), Buffer.from(q.signature, "hex")));
+ });
+ 
+-test("SHORT quote covers a rise and uses σ_up", async () => {
+-  const q = await makeQuote({ ...req, direction: "short" }, deps());
++test("a short position gets SHORT cover priced from σ_up", async () => {
++  const q = await makeQuote(req, deps({ position: async () => position({ direction: 1 }) }));
++  assert.equal(q.quote.direction, "short");
+   assert.equal(q.quote.p_end, 2_500_000n);
+   assert.equal(q.quote.vol_bps, 9_000);
+ });
+ 
+-test("X11: bad inputs are rejected with BadRequest", async () => {
++test("locked capital is not counted as available", async () => {
++  const q = await makeQuote(req, deps({ vaultState: async () => ({ capital: 600_000n * UNIT, reserved: 249_750n * UNIT, locked: 100_000n * UNIT }) }));
++  assert.equal(q.breakdown.utilization, 0.5);
++});
++
++test("bad inputs are rejected with BadRequest", async () => {
+   const bad = [
+-    { ...req, trader: "nope" },
+-    { ...req, direction: "up" },
++    { ...req, positionId: "nope" },
++    { ...req, positionId: POS.toUpperCase() },
+     { ...req, duration: 600 },
++    { ...req, duration: "86400" },
+     { ...req, rangeBps: 499 },
+     { ...req, rangeBps: 5_001 },
+-    { ...req, rangeBps: 25.5 },
+     { ...req, amount: 1000 },
+-    { ...req, amount: "-5" },
+-    { ...req, amount: "1.12345678" },
+     { ...req, amount: "0" },
+     { ...req, amount: "50000.0000001" },
++    { ...req, amount: "1000.0000001" },
+   ];
+   for (const input of bad) await assert.rejects(makeQuote(input, deps()), BadRequest, JSON.stringify(input));
+ });
+ 
+-test("X12: no quote is signed when the price feed or vault read fails", async () => {
+-  await assert.rejects(makeQuote(req, deps({ spot: async () => { throw new Error("down"); } })), Upstream);
+-  await assert.rejects(makeQuote(req, deps({ spot: async () => NaN })), Upstream);
+-  await assert.rejects(makeQuote(req, deps({ vaultState: async () => { throw new Error("rpc"); } })), Upstream);
++test("cover larger than the position, closed positions and unlisted assets are refused", async () => {
++  await assert.rejects(makeQuote({ ...req, amount: "1000.01" }, deps()), BadRequest);
++  await assert.rejects(makeQuote(req, deps({ position: async () => position({ status: 1 }) })), BadRequest);
++  await assert.rejects(makeQuote(req, deps({ position: async () => position({ asset: "DOGE" }) })), BadRequest);
+ });
+ 
+-test("E10: empty pool still yields a signed quote for the contract to reject", async () => {
+-  const q = await makeQuote(req, deps({ vaultState: async () => ({ capital: 0n, reserved: 0n }) }));
+-  assert.equal(q.breakdown.mU, 1.5);
++test("liquidity cap refuses cover once exposure passes κ × depth", async () => {
++  // exposure 99,750 + new 250 = 100,000 → needs depth ≥ 200,000
++  await makeQuote(req, deps({ depth: async () => 200_000 }));
++  await assert.rejects(makeQuote(req, deps({ depth: async () => 199_999 })), /liquidity cap/);
++});
++
++test("vol shock pauses ≤ 1h covers and scales σ for longer ones", async () => {
++  const shock = async () => ({ factor: 2.5, until: 1_900 });
++  await assert.rejects(makeQuote({ ...req, duration: 3_600 }, deps({ shock })), Upstream);
++  const q = await makeQuote(req, deps({ shock }));
++  assert.equal(q.breakdown.sigma, 2.5);
++  const expired = async () => ({ factor: 2.5, until: 999 });
++  assert.equal((await makeQuote(req, deps({ shock: expired }))).breakdown.sigma, 1.0);
++});
++
++test("no quote is signed when the chain read fails", async () => {
++  await assert.rejects(makeQuote(req, deps({ position: async () => { throw new Error("rpc"); } })), Upstream);
++  await assert.rejects(makeQuote(req, deps({ vaultState: async () => { throw new Error("rpc"); } })), Upstream);
++  await assert.rejects(makeQuote(req, deps({ exposure: async () => { throw new Error("rpc"); } })), Upstream);
+ });
+ 
+-test("S9: the secret never appears in the response", async () => {
++test("the secret never appears in the response", async () => {
+   const q = await makeQuote(req, deps());
+   const body = JSON.stringify(q, (_, v) => (typeof v === "bigint" ? v.toString() : v));
+   assert.ok(!body.includes(kp.secret()));
+diff --git a/pricer/vol-table.json b/pricer/vol-table.json
+deleted file mode 100644
+index 15a535b..0000000
+--- a/pricer/vol-table.json
++++ /dev/null
+@@ -1,59 +0,0 @@
+-{
+-  "asset": "XLM",
+-  "source": "Binance XLMUSDT closes: 30d of 5m for buckets <= 12h, 90d of 1h for >= 1d",
+-  "generated_at": "2026-10-10T16:00:33.865Z",
+-  "r_ref": 0.25,
+-  "floor": 0.6,
+-  "cap": 3,
+-  "buckets": {
+-    "900": {
+-      "down": 0.708,
+-      "up": 0.7318,
+-      "raw_down": 0.708,
+-      "raw_up": 0.7318,
+-      "samples": 8637
+-    },
+-    "3600": {
+-      "down": 0.6937,
+-      "up": 0.741,
+-      "raw_down": 0.6937,
+-      "raw_up": 0.741,
+-      "samples": 8628
+-    },
+-    "14400": {
+-      "down": 0.6879,
+-      "up": 0.7754,
+-      "raw_down": 0.6879,
+-      "raw_up": 0.7754,
+-      "samples": 8592
+-    },
+-    "43200": {
+-      "down": 0.685,
+-      "up": 0.8417,
+-      "raw_down": 0.685,
+-      "raw_up": 0.8417,
+-      "samples": 8496
+-    },
+-    "86400": {
+-      "down": 0.6,
+-      "up": 0.6608,
+-      "raw_down": 0.5993,
+-      "raw_up": 0.6608,
+-      "samples": 2136
+-    },
+-    "259200": {
+-      "down": 0.6,
+-      "up": 0.6244,
+-      "raw_down": 0.5281,
+-      "raw_up": 0.6244,
+-      "samples": 2088
+-    },
+-    "604800": {
+-      "down": 0.6,
+-      "up": 0.752,
+-      "raw_down": 0.5167,
+-      "raw_up": 0.752,
+-      "samples": 1992
+-    }
+-  }
+-}
+diff --git a/pricer/vol-tables/BTC.json b/pricer/vol-tables/BTC.json
+new file mode 100644
+index 0000000..41d81cd
+--- /dev/null
++++ b/pricer/vol-tables/BTC.json
+@@ -0,0 +1,59 @@
++{
++  "asset": "BTC",
++  "source": "Coinbase BTC-USD closes: 30d of 5m for buckets <= 12h, 90d of 1h for >= 1d",
++  "generated_at": "2026-10-15T18:06:54.124Z",
++  "r_ref": 0.25,
++  "floor": 0.5,
++  "cap": 3,
++  "buckets": {
++    "900": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.2842,
++      "raw_up": 0.2963,
++      "samples": 8638
++    },
++    "3600": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.2753,
++      "raw_up": 0.3018,
++      "samples": 8629
++    },
++    "14400": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.2612,
++      "raw_up": 0.3151,
++      "samples": 8593
++    },
++    "43200": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.2589,
++      "raw_up": 0.345,
++      "samples": 8497
++    },
++    "86400": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.2477,
++      "raw_up": 0.3864,
++      "samples": 2137
++    },
++    "259200": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.2194,
++      "raw_up": 0.476,
++      "samples": 2089
++    },
++    "604800": {
++      "down": 0.5,
++      "up": 0.5936,
++      "raw_down": 0.1851,
++      "raw_up": 0.5936,
++      "samples": 1993
++    }
++  }
++}
+diff --git a/pricer/vol-tables/ETH.json b/pricer/vol-tables/ETH.json
+new file mode 100644
+index 0000000..794fe87
+--- /dev/null
++++ b/pricer/vol-tables/ETH.json
+@@ -0,0 +1,59 @@
++{
++  "asset": "ETH",
++  "source": "Coinbase ETH-USD closes: 30d of 5m for buckets <= 12h, 90d of 1h for >= 1d",
++  "generated_at": "2026-10-15T18:07:08.830Z",
++  "r_ref": 0.25,
++  "floor": 0.5,
++  "cap": 3,
++  "buckets": {
++    "900": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.3742,
++      "raw_up": 0.3762,
++      "samples": 8638
++    },
++    "3600": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.3611,
++      "raw_up": 0.3679,
++      "samples": 8629
++    },
++    "14400": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.3714,
++      "raw_up": 0.3817,
++      "samples": 8593
++    },
++    "43200": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.3942,
++      "raw_up": 0.3937,
++      "samples": 8497
++    },
++    "86400": {
++      "down": 0.5,
++      "up": 0.5,
++      "raw_down": 0.3256,
++      "raw_up": 0.4833,
++      "samples": 2137
++    },
++    "259200": {
++      "down": 0.5,
++      "up": 0.564,
++      "raw_down": 0.272,
++      "raw_up": 0.564,
++      "samples": 2089
++    },
++    "604800": {
++      "down": 0.5,
++      "up": 0.6538,
++      "raw_down": 0.2178,
++      "raw_up": 0.6538,
++      "samples": 1993
++    }
++  }
++}
+diff --git a/pricer/vol-tables/XLM.json b/pricer/vol-tables/XLM.json
+new file mode 100644
+index 0000000..b6ed18e
+--- /dev/null
++++ b/pricer/vol-tables/XLM.json
+@@ -0,0 +1,59 @@
++{
++  "asset": "XLM",
++  "source": "Coinbase XLM-USD closes: 30d of 5m for buckets <= 12h, 90d of 1h for >= 1d",
++  "generated_at": "2026-10-15T18:06:41.399Z",
++  "r_ref": 0.25,
++  "floor": 0.6,
++  "cap": 3,
++  "buckets": {
++    "900": {
++      "down": 0.7044,
++      "up": 0.7042,
++      "raw_down": 0.7044,
++      "raw_up": 0.7042,
++      "samples": 8638
++    },
++    "3600": {
++      "down": 0.6969,
++      "up": 0.705,
++      "raw_down": 0.6969,
++      "raw_up": 0.705,
++      "samples": 8629
++    },
++    "14400": {
++      "down": 0.688,
++      "up": 0.7223,
++      "raw_down": 0.688,
++      "raw_up": 0.7223,
++      "samples": 8593
++    },
++    "43200": {
++      "down": 0.7036,
++      "up": 0.755,
++      "raw_down": 0.7036,
++      "raw_up": 0.755,
++      "samples": 8497
++    },
++    "86400": {
++      "down": 0.6322,
++      "up": 0.6519,
++      "raw_down": 0.6322,
++      "raw_up": 0.6519,
++      "samples": 2137
++    },
++    "259200": {
++      "down": 0.6,
++      "up": 0.6197,
++      "raw_down": 0.581,
++      "raw_up": 0.6197,
++      "samples": 2089
++    },
++    "604800": {
++      "down": 0.6069,
++      "up": 0.7276,
++      "raw_down": 0.6069,
++      "raw_up": 0.7276,
++      "samples": 1993
++    }
++  }
++}
+diff --git a/pricer/wrangler.jsonc b/pricer/wrangler.jsonc
+index 70e391f..a95325c 100644
+--- a/pricer/wrangler.jsonc
++++ b/pricer/wrangler.jsonc
+@@ -4,11 +4,16 @@
+   "compatibility_date": "2026-09-01",
+   "compatibility_flags": ["nodejs_compat"],
+   "assets": { "directory": "./public" },
+-  // Filled from scripts/deploy.sh output. PRICER_SECRET and FAUCET_SECRET are set with `wrangler secret put`.
++  // Every minute: keeper + vol-shock watch. Daily: liquidity depth.
++  "triggers": { "crons": ["* * * * *", "0 0 * * *"] },
++  // id from `npx wrangler kv namespace create KV`.
++  "kv_namespaces": [{ "binding": "KV", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
++  // Filled from scripts/deploy.sh output. PRICER_SECRET, FAUCET_SECRET and KEEPER_SECRET are set with `wrangler secret put`.
+   "vars": {
+     "RPC_URL": "https://soroban-testnet.stellar.org",
+     "NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
+-    "VAULT_ID": "CAZXBVORB2QN7V2FHYJFALYDRLBWZGUQDW2GSF3IKGYWFMEVVMZDS4PG",
++    "VAULT_ID": "REPLACE_WITH_VAULT_ID",
++    "PERPDEX_ID": "REPLACE_WITH_PERPDEX_ID",
+     "ASSET_CODE": "tUSDC",
+     "ASSET_ISSUER": "GCYYOX6T6DSACBQRPFR57HPLCUSRHSBD5QSQ3PWUCEOQ5OVKXPGBATME"
+   }
+diff --git a/scripts/admin.sh b/scripts/admin.sh
+new file mode 100755
+index 0000000..dfd68bd
+--- /dev/null
++++ b/scripts/admin.sh
+@@ -0,0 +1,16 @@
++#!/usr/bin/env bash
++# Calls an admin-only vault function, signed by both admin signers (TOSBI + PerpDEX).
++# Usage: scripts/admin.sh <local|testnet> <function> [args...]
++#   scripts/admin.sh testnet propose --change '{"Perpdex":["C...",false]}'
++#   scripts/admin.sh testnet execute --id 0
++#   scripts/admin.sh testnet unpause
++set -euo pipefail
++NET=$1; shift
++ROOT=$(cd "$(dirname "$0")/.." && pwd)
++VAULT_ID=$(grep '^VAULT_ID=' "$ROOT/pricer/.dev.vars" | cut -d= -f2)
++ADMIN_ID=$(grep '^ADMIN_ID=' "$ROOT/pricer/.dev.vars" | cut -d= -f2)
++stellar contract invoke --id "$VAULT_ID" --source-account "$ADMIN_ID" --network "$NET" --build-only -- "$@" \
++  | stellar tx simulate --source-account "$ADMIN_ID" --network "$NET" \
++  | stellar tx sign --sign-with-key tosbi-signer-tosbi --network "$NET" \
++  | stellar tx sign --sign-with-key tosbi-signer-pdx --network "$NET" \
++  | stellar tx send --network "$NET"
+diff --git a/scripts/deploy.sh b/scripts/deploy.sh
+index 82d2d70..a846756 100755
+--- a/scripts/deploy.sh
++++ b/scripts/deploy.sh
+@@ -1,58 +1,101 @@
+ #!/usr/bin/env bash
+-# Deploys the vault + tUSDC test asset, seeds the pool, and writes pricer/.dev.vars.
++# Deploys the vault, the mock PerpDEX, the tUSDC test asset (and a mock oracle on local), seeds the
++# pool, and writes pricer/.dev.vars.
+ # Usage: scripts/deploy.sh [local|testnet]
+ set -euo pipefail
+ NET=${1:-testnet}
+ ROOT=$(cd "$(dirname "$0")/.." && pwd)
++WASM="$ROOT/target/wasm32v1-none/release"
+ CODE=tUSDC
+ U=10000000
+ POOL=$((10000 * U))
++REFLECTOR_TESTNET=CCYOZJCOPG34LLQQ7N24YXBM7LL62R7ONMZ3G6WZAAYPB5OYKOMJRN63
+ 
+ case "$NET" in
+-  local) RPC=http://localhost:8000/rpc; PASS="Standalone Network ; February 2017" ;;
+-  testnet) RPC=https://soroban-testnet.stellar.org; PASS="Test SDF Network ; September 2015" ;;
++  local) RPC=http://localhost:8000/rpc; PASS="Standalone Network ; February 2017"; MIN_AGE=0; ACTIVATION=0 ;;
++  testnet) RPC=https://soroban-testnet.stellar.org; PASS="Test SDF Network ; September 2015"; MIN_AGE=60; ACTIVATION=300 ;;
+   *) echo "usage: $0 [local|testnet]" >&2; exit 1 ;;
+ esac
+ 
+-for k in admin issuer treasury pricer; do
++for k in owner operator keeper issuer treasury pricer signer-tosbi signer-pdx; do
+   stellar keys address "tosbi-$k" >/dev/null 2>&1 || stellar keys generate "tosbi-$k" >/dev/null
+ done
+-for k in admin issuer treasury; do stellar keys fund "tosbi-$k" --network "$NET" >/dev/null 2>&1 || true; done
+-addr() { stellar keys address "tosbi-$1"; }
+-ADMIN=$(addr admin); ISSUER=$(addr issuer); TREASURY=$(addr treasury); PRICER=$(addr pricer)
++# A fresh admin account per deploy: once it is 2-of-2 multisig its own key can no longer sign.
++ADMIN_KEY="tosbi-admin-$(date +%s)"
++stellar keys generate "$ADMIN_KEY" >/dev/null
++for k in owner operator keeper issuer treasury; do stellar keys fund "tosbi-$k" --network "$NET" >/dev/null 2>&1 || true; done
++stellar keys fund "$ADMIN_KEY" --network "$NET" >/dev/null
++addr() { stellar keys address "$1"; }
++ADMIN=$(addr "$ADMIN_KEY"); OWNER=$(addr tosbi-owner); OPERATOR=$(addr tosbi-operator)
++ISSUER=$(addr tosbi-issuer); TREASURY=$(addr tosbi-treasury); PRICER=$(addr tosbi-pricer)
+ ASSET="$CODE:$ISSUER"
+ 
+-for k in admin treasury; do
++for s in tosbi-signer-tosbi tosbi-signer-pdx; do
++  stellar tx new set-options --source "$ADMIN_KEY" --signer "$(addr $s)" --signer-weight 1 --network "$NET" >/dev/null
++done
++stellar tx new set-options --source "$ADMIN_KEY" --master-weight 0 \
++  --low-threshold 2 --med-threshold 2 --high-threshold 2 --network "$NET" >/dev/null
++
++for k in owner treasury; do
+   stellar tx new change-trust --source "tosbi-$k" --line "$ASSET" --network "$NET" >/dev/null
+ done
+-stellar contract asset deploy --asset "$ASSET" --source tosbi-admin --network "$NET" >/dev/null 2>&1 || true
++stellar contract asset deploy --asset "$ASSET" --source tosbi-operator --network "$NET" >/dev/null 2>&1 || true
+ TOKEN=$(stellar contract id asset --asset "$ASSET" --network "$NET")
+ PRICER_HEX=$(cd "$ROOT/pricer" && node --input-type=module -e \
+   "import {StrKey} from '@stellar/stellar-sdk'; console.log(Buffer.from(StrKey.decodeEd25519PublicKey('$PRICER')).toString('hex'))")
+ 
+ (cd "$ROOT" && stellar contract build >/dev/null)
+-PARAMS="{\"a_min\":\"$((20 * U))\",\"a_max\":\"$((50000 * U))\",\"wallet_cap_bps\":200,\"wallet_cap_max\":\"$((25000 * U))\",\"activation_delay\":300,\"withdraw_delay\":604800}"
+-VAULT=$(stellar contract deploy --wasm "$ROOT/target/wasm32v1-none/release/tosbi_protection.wasm" \
+-  --source tosbi-admin --network "$NET" --alias tosbi-vault -- \
+-  --admin "$ADMIN" --token "$TOKEN" --treasury "$TREASURY" --pricer "$PRICER_HEX" --params "$PARAMS")
++deploy() { stellar contract deploy --wasm "$WASM/$1.wasm" --source tosbi-operator --network "$NET" "${@:2}"; }
++
++if [ "$NET" = local ]; then
++  ORACLE=$(deploy tosbi_mock_oracle)
++  NOW=$(date +%s)
++  for p in XLM:20000000000000 BTC:10000000000000000000 ETH:400000000000000000; do
++    stellar contract invoke --id "$ORACLE" --source tosbi-operator --network "$NET" -- \
++      set --asset "${p%%:*}" --timestamp "$NOW" --price "${p##*:}" >/dev/null
++  done
++else
++  ORACLE=$REFLECTOR_TESTNET
++fi
++PERPDEX=$(deploy tosbi_mock_perpdex -- --oracle "$ORACLE")
++
++PARAMS=$(cat <<JSON
++{"a_min":"$((20 * U))","a_max":"$((50000 * U))","wallet_cap_bps":200,"wallet_cap_max":"$((25000 * U))",
++ "activation_delay":$ACTIVATION,"withdraw_delay":604800,"util_cap_bps":9000,"side_cap_bps":2500,
++ "asset_cap_bps":4000,"mark_tol_bps":50,"close_tol_bps":150,"min_position_age":$MIN_AGE,
++ "record_cap_bps":1500,"stale_max":7200,"big_payout":"$((10000 * U))","share_pdx_bps":0,"timelock":300}
++JSON
++)
++CONFIG="{\"admin\":\"$ADMIN\",\"owner\":\"$OWNER\",\"operator\":\"$OPERATOR\",\"token\":\"$TOKEN\",\"treasury\":\"$TREASURY\",\"pricer\":\"$PRICER_HEX\",\"oracle\":\"$ORACLE\",\"params\":$PARAMS}"
++VAULT=$(deploy tosbi_protection --alias tosbi-vault -- \
++  --config "$CONFIG" --assets '["XLM","BTC","ETH"]' --perpdexes "[\"$PERPDEX\"]")
+ 
+-stellar tx new payment --source tosbi-issuer --destination "$ADMIN" --asset "$ASSET" --amount "$POOL" --network "$NET" >/dev/null
+-stellar contract invoke --id "$VAULT" --source tosbi-admin --network "$NET" -- deposit_capital --from "$ADMIN" --amount "$POOL" >/dev/null
++stellar tx new payment --source tosbi-issuer --destination "$OWNER" --asset "$ASSET" --amount "$POOL" --network "$NET" >/dev/null
++stellar contract invoke --id "$VAULT" --source tosbi-owner --network "$NET" -- deposit_capital --from "$OWNER" --amount "$POOL" >/dev/null
+ 
+ cat > "$ROOT/pricer/.dev.vars" <<VARS
+ RPC_URL=$RPC
+ NETWORK_PASSPHRASE=$PASS
+ VAULT_ID=$VAULT
++PERPDEX_ID=$PERPDEX
++ORACLE_ID=$ORACLE
++ADMIN_ID=$ADMIN
+ ASSET_CODE=$CODE
+ ASSET_ISSUER=$ISSUER
+ PRICER_SECRET=$(stellar keys secret tosbi-pricer)
+ FAUCET_SECRET=$(stellar keys secret tosbi-issuer)
++KEEPER_SECRET=$(stellar keys secret tosbi-keeper)
++OPERATOR_SECRET=$(stellar keys secret tosbi-operator)
+ VARS
+ 
+ echo "network     $NET"
+ echo "vault       $VAULT"
++echo "perpdex     $PERPDEX"
++echo "oracle      $ORACLE"
+ echo "token       $TOKEN ($ASSET)"
+-echo "admin       $ADMIN"
++echo "admin       $ADMIN (2-of-2: tosbi-signer-tosbi + tosbi-signer-pdx)"
++echo "owner       $OWNER"
++echo "operator    $OPERATOR"
+ echo "treasury    $TREASURY"
+ echo "pricer key  $PRICER ($PRICER_HEX)"
+ echo "wrote pricer/.dev.vars"
