@@ -14,3 +14,5 @@ soroban-sdk = { workspace = true }
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
 ed25519-dalek = "2"
+tosbi-mock-oracle = { path = "../mock-oracle" }
+tosbi-mock-perpdex = { path = "../mock-perpdex" }

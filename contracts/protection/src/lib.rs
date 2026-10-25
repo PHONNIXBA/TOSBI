@@ -1,14 +1,20 @@
 #![no_std]
 
+mod position;
+pub use position::{Position, PositionStatus};
+
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, xdr::ToXdr, Address,
-    BytesN, Env, Symbol,
+    contract, contractclient, contracterror, contractevent, contractimpl, contracttype, token,
+    xdr::ToXdr, Address, BytesN, Env, Symbol, Vec,
 };
 
 const DAY_IN_LEDGERS: u32 = 17_280;
 const TTL_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS;
 const TTL_EXTEND_TO: u32 = 30 * DAY_IN_LEDGERS;
 const BPS: i128 = 10_000;
+const UNIT: u64 = 10_000_000;
+const MIN_WINDOW: u64 = 300;
+const MAX_WINDOW: u64 = 1_800;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -23,11 +29,30 @@ pub enum Error {
     InsufficientCapital = 7,
     WalletCapExceeded = 8,
     NotFound = 9,
-    AlreadyReleased = 10,
+    AlreadySettled = 10,
     WithdrawalPending = 11,
     NoWithdrawal = 12,
     WithdrawalLocked = 13,
     PaymentFailed = 14,
+    Paused = 15,
+    AssetDisabled = 16,
+    PerpdexNotAllowed = 17,
+    PositionMismatch = 18,
+    MarkMoved = 19,
+    PositionTooNew = 20,
+    AlreadyCovered = 21,
+    UtilizationCap = 22,
+    ConcentrationCap = 23,
+    NotExpired = 24,
+    NotClosed = 25,
+    OracleStale = 26,
+    Timelocked = 27,
+    NoChange = 28,
+}
+
+#[contractclient(name = "PerpdexClient")]
+pub trait PerpdexInterface {
+    fn get_position(env: Env, position_id: BytesN<32>) -> Option<Position>;
 }
 
 #[contracttype]
@@ -38,12 +63,21 @@ pub enum Direction {
     Short = 1,
 }
 
+impl Direction {
+    fn opposite(self) -> Self {
+        match self {
+            Self::Long => Self::Short,
+            Self::Short => Self::Long,
+        }
+    }
+}
+
 #[contracttype]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum Status {
     Active = 0,
-    Released = 1,
+    Settled = 1,
 }
 
 #[contracttype]
@@ -55,15 +89,29 @@ pub struct Params {
     pub wallet_cap_max: i128,
     pub activation_delay: u64,
     pub withdraw_delay: u64,
+    pub util_cap_bps: u32,     // 9000 = 90% of free capital may be reserved
+    pub side_cap_bps: u32,     // 2500 = one (asset, direction)
+    pub asset_cap_bps: u32,    // 4000 = one asset, both directions
+    pub mark_tol_bps: u32,     // 50 = quote p_start within 0.5% of the position's mark
+    pub close_tol_bps: u32,    // 150 (used in Task 3)
+    pub min_position_age: u64, // 60 s
+    pub record_cap_bps: u32,   // 1500 (Task 2)
+    pub stale_max: u64,        // 7200 s (Task 2)
+    pub big_payout: i128,      // above this max payout, settle on the full 30-min window
+    pub share_pdx_bps: u32,    // fee share paid to the owner
+    pub timelock: u64,         // Task 4
 }
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Config {
     pub admin: Address,
+    pub owner: Address,
+    pub operator: Address,
     pub token: Address,
     pub treasury: Address,
     pub pricer: BytesN<32>,
+    pub oracle: Address,
     pub params: Params,
 }
 
@@ -71,7 +119,10 @@ pub struct Config {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Quote {
+    // field order doesn't matter for XDR (keys are sorted), names do
     pub vault: Address,
+    pub perpdex: Address,
+    pub position_id: BytesN<32>,
     pub trader: Address,
     pub asset: Symbol,
     pub direction: Direction,
@@ -94,6 +145,8 @@ pub struct Quote {
 pub struct Protection {
     pub id: u64,
     pub trader: Address,
+    pub perpdex: Address,
+    pub position_id: BytesN<32>,
     pub asset: Symbol,
     pub direction: Direction,
     pub qty: i128,
@@ -105,7 +158,10 @@ pub struct Protection {
     pub t_mint: u64,
     pub t_active: u64,
     pub t_expire: u64,
+    pub window: u64,
     pub status: Status,
+    pub settle_price: i128,
+    pub payout: i128, // 0 until settled
 }
 
 #[contracttype]
@@ -136,13 +192,22 @@ pub struct VaultState {
 
 #[contracttype]
 enum Key {
+    // private
     Config,
     Vault,
     NextId,
+    NextChange,
     Withdrawal,
+    Paused,
+    VolHash,
+    Asset(Symbol),
+    Perpdex(Address),
+    Exposure(Symbol, Direction),
     Protection(u64),
+    Covered(Address, BytesN<32>),
     WalletReserved(Address),
     Nonce(u64),
+    Change(u64),
 }
 
 #[contractevent]
@@ -164,13 +229,6 @@ pub struct Minted {
 }
 
 #[contractevent]
-pub struct Released {
-    #[topic]
-    pub id: u64,
-    pub max_payout: i128,
-}
-
-#[contractevent]
 pub struct WithdrawalRequested {
     pub amount: i128,
     pub unlock_at: u64,
@@ -186,27 +244,19 @@ pub struct ProtectionContract;
 
 #[contractimpl]
 impl ProtectionContract {
-    pub fn __constructor(
-        env: Env,
-        admin: Address,
-        token: Address,
-        treasury: Address,
-        pricer: BytesN<32>,
-        params: Params,
-    ) {
+    pub fn __constructor(env: Env, config: Config, assets: Vec<Symbol>, perpdexes: Vec<Address>) {
         let s = env.storage().instance();
-        s.set(
-            &Key::Config,
-            &Config {
-                admin,
-                token,
-                treasury,
-                pricer,
-                params,
-            },
-        );
+        s.set(&Key::Config, &config);
         s.set(&Key::Vault, &Vault::default());
         s.set(&Key::NextId, &0u64);
+
+        for asset in assets {
+            s.set(&Key::Asset(asset), &true);
+        }
+
+        for perp in perpdexes {
+            s.set(&Key::Perpdex(perp), &true);
+        }
     }
 
     pub fn deposit_capital(env: Env, from: Address, amount: i128) -> Result<(), Error> {
@@ -235,51 +285,41 @@ impl ProtectionContract {
         env.crypto()
             .ed25519_verify(&cfg.pricer, &quote.clone().to_xdr(&env), &sig);
 
-        let now = env.ledger().timestamp();
-        if now > quote.expires_at {
-            return Err(Error::QuoteExpired);
-        }
-        if quote.vault != env.current_contract_address()
-            || quote.premium <= 0
-            || quote.fee < 0
-            || quote.max_payout <= 0
-            || quote.max_payout > quote.amount
-            || quote.duration == 0
-        {
-            return Err(Error::InvalidQuote);
-        }
-        let nonce_key = Key::Nonce(quote.nonce);
-        if env.storage().persistent().has(&nonce_key) {
-            return Err(Error::NonceUsed);
-        }
-        let p = &cfg.params;
-        if quote.amount < p.a_min || quote.amount > p.a_max {
-            return Err(Error::AmountOutOfRange);
-        }
+        check_quote(&env, &quote, &cfg)?;
 
-        let mut v = vault(&env);
-        v.capital += quote.premium;
-        let available = v.capital - v.locked;
-        v.reserved += quote.max_payout;
-        if v.reserved > available {
-            return Err(Error::InsufficientCapital);
-        }
-        let wallet = wallet_reserved(&env, &quote.trader) + quote.max_payout;
-        let wallet_cap = (available * p.wallet_cap_bps as i128 / BPS).min(p.wallet_cap_max);
-        if wallet > wallet_cap {
-            return Err(Error::WalletCapExceeded);
-        }
+        let (v, side, wallet) = check_capacity(&env, &quote, &cfg)?;
+
+        let p = &cfg.params;
+
+        check_position(&env, &quote, p)?;
+
+        set_exposure(&env, &quote.asset, &quote.direction, side);
 
         set_vault(&env, &v);
+
+        let nonce_key = Key::Nonce(quote.nonce);
         set_persistent(&env, &nonce_key, &true);
+
         set_persistent(&env, &Key::WalletReserved(quote.trader.clone()), &wallet);
+
         let id = next_id(&env);
+        let now = env.ledger().timestamp();
+        let window = window_for(quote.duration, quote.max_payout, p);
+
+        set_persistent(
+            &env,
+            &Key::Covered(quote.perpdex.clone(), quote.position_id.clone()),
+            &id,
+        );
+
         set_persistent(
             &env,
             &Key::Protection(id),
             &Protection {
                 id,
                 trader: quote.trader.clone(),
+                perpdex: quote.perpdex,
+                position_id: quote.position_id,
                 asset: quote.asset,
                 direction: quote.direction,
                 qty: quote.qty,
@@ -292,8 +332,14 @@ impl ProtectionContract {
                 t_active: now + p.activation_delay,
                 t_expire: now + quote.duration,
                 status: Status::Active,
+                window: window,
+                settle_price: 0,
+                payout: 0,
             },
         );
+
+        let to_pdx = share(quote.fee, p.share_pdx_bps as i128);
+        let to_treasury = quote.fee - to_pdx;
 
         pay(
             &env,
@@ -302,9 +348,13 @@ impl ProtectionContract {
             &env.current_contract_address(),
             quote.premium,
         )?;
-        if quote.fee > 0 {
-            pay(&env, &cfg.token, &quote.trader, &cfg.treasury, quote.fee)?;
+        if to_pdx > 0 {
+            pay(&env, &cfg.token, &quote.trader, &cfg.owner, to_pdx)?;
         }
+        if to_treasury > 0 {
+            pay(&env, &cfg.token, &quote.trader, &cfg.treasury, to_treasury)?;
+        }
+
         Minted {
             id,
             trader: quote.trader,
@@ -316,45 +366,9 @@ impl ProtectionContract {
         Ok(id)
     }
 
-    /// Frees a live reservation with no payout. Stand-in until settlement (Instaward 2) replaces it.
-    pub fn release(env: Env, caller: Address, id: u64) -> Result<(), Error> {
-        caller.require_auth();
-        let cfg = config(&env);
-        let key = Key::Protection(id);
-        let mut p: Protection = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .ok_or(Error::NotFound)?;
-        if caller != cfg.admin && caller != p.trader {
-            return Err(Error::Unauthorized);
-        }
-        if p.status == Status::Released {
-            return Err(Error::AlreadyReleased);
-        }
-        p.status = Status::Released;
-        set_persistent(&env, &key, &p);
-
-        let mut v = vault(&env);
-        v.reserved -= p.max_payout;
-        set_vault(&env, &v);
-        let wallet_key = Key::WalletReserved(p.trader.clone());
-        set_persistent(
-            &env,
-            &wallet_key,
-            &(wallet_reserved(&env, &p.trader) - p.max_payout),
-        );
-        Released {
-            id,
-            max_payout: p.max_payout,
-        }
-        .publish(&env);
-        Ok(())
-    }
-
     pub fn withdraw_request(env: Env, amount: i128) -> Result<u64, Error> {
         let cfg = config(&env);
-        cfg.admin.require_auth();
+        cfg.owner.require_auth();
         if amount <= 0 {
             return Err(Error::InvalidAmount);
         }
@@ -377,7 +391,7 @@ impl ProtectionContract {
 
     pub fn withdraw_execute(env: Env) -> Result<i128, Error> {
         let cfg = config(&env);
-        cfg.admin.require_auth();
+        cfg.owner.require_auth();
         let w: Withdrawal = env
             .storage()
             .instance()
@@ -393,11 +407,23 @@ impl ProtectionContract {
         env.storage().instance().remove(&Key::Withdrawal);
         token::Client::new(&env, &cfg.token).transfer(
             &env.current_contract_address(),
-            &cfg.admin,
+            &cfg.owner,
             &w.amount,
         );
         WithdrawalExecuted { amount: w.amount }.publish(&env);
         Ok(w.amount)
+    }
+
+    pub fn exposure(env: Env, asset: Symbol, direction: Direction) -> i128 {
+        exposure(&env, &asset, &direction)
+    }
+
+    pub fn next_id(env: Env) -> u64 {
+        next_id(&env)
+    }
+
+    pub fn paused(env: Env) -> bool {
+        paused(&env)
     }
 
     pub fn state(env: Env) -> VaultState {
@@ -474,6 +500,168 @@ fn set_persistent<V: soroban_sdk::IntoVal<Env, soroban_sdk::Val>>(env: &Env, key
     env.storage()
         .persistent()
         .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
+pub fn window_for(duration: u64, max_payout: i128, p: &Params) -> u64 {
+    if max_payout > p.big_payout {
+        return MAX_WINDOW;
+    }
+
+    (duration * 16_853 / 1_000)
+        .isqrt()
+        .clamp(MIN_WINDOW, MAX_WINDOW)
+}
+
+fn exposure(env: &Env, asset: &Symbol, direction: &Direction) -> i128 {
+    env.storage()
+        .instance()
+        .get(&Key::Exposure(asset.clone(), direction.clone()))
+        .unwrap_or(0)
+}
+
+pub fn set_exposure(env: &Env, asset: &Symbol, direction: &Direction, amount: i128) {
+    env.storage()
+        .instance()
+        .set(&Key::Exposure(asset.clone(), direction.clone()), &amount)
+}
+
+pub fn share(amount: i128, bps: i128) -> i128 {
+    amount * bps / BPS
+}
+
+fn paused(env: &Env) -> bool {
+    env.storage().instance().get(&Key::Paused).unwrap_or(false)
+}
+
+fn check_quote(env: &Env, quote: &Quote, cfg: &Config) -> Result<(), Error> {
+    if paused(env) {
+        return Err(Error::Paused);
+    }
+
+    let now = env.ledger().timestamp();
+    if now > quote.expires_at {
+        return Err(Error::QuoteExpired);
+    }
+
+    if quote.vault != env.current_contract_address()
+        || quote.premium <= 0
+        || quote.fee < 0
+        || quote.max_payout <= 0
+        || quote.max_payout > quote.amount
+        || quote.duration == 0
+        || quote.qty <= 0
+        || quote.p_start <= 0
+    {
+        return Err(Error::InvalidQuote);
+    }
+
+    let p = &cfg.params;
+    if quote.amount < p.a_min || quote.amount > p.a_max {
+        return Err(Error::AmountOutOfRange);
+    }
+
+    if !env
+        .storage()
+        .instance()
+        .get(&Key::Asset(quote.asset.clone()))
+        .unwrap_or(false)
+    {
+        return Err(Error::AssetDisabled);
+    }
+
+    let nonce_key = Key::Nonce(quote.nonce);
+    if env.storage().persistent().has(&nonce_key) {
+        return Err(Error::NonceUsed);
+    }
+
+    let covered = Key::Covered(quote.perpdex.clone(), quote.position_id.clone());
+    if env.storage().persistent().has(&covered) {
+        return Err(Error::AlreadyCovered);
+    }
+
+    Ok(())
+}
+
+fn check_capacity(env: &Env, quote: &Quote, cfg: &Config) -> Result<(Vault, i128, i128), Error> {
+    let mut v = vault(env);
+    v.capital += quote.premium;
+    let available = v.capital - v.locked;
+    v.reserved += quote.max_payout;
+    if v.reserved > available {
+        return Err(Error::InsufficientCapital);
+    }
+
+    let p = &cfg.params;
+    if v.reserved * BPS > available * p.util_cap_bps as i128 {
+        return Err(Error::UtilizationCap);
+    }
+
+    let exposure: i128 = env
+        .storage()
+        .instance()
+        .get(&Key::Exposure(quote.asset.clone(), quote.direction))
+        .unwrap_or(0);
+    let side = exposure + quote.max_payout;
+    if side * BPS > available * p.side_cap_bps as i128 {
+        return Err(Error::ConcentrationCap);
+    }
+
+    let opposite_exposure: i128 = env
+        .storage()
+        .instance()
+        .get(&Key::Exposure(
+            quote.asset.clone(),
+            quote.direction.opposite(),
+        ))
+        .unwrap_or(0);
+    let both = side + opposite_exposure;
+    if both * BPS > available * p.asset_cap_bps as i128 {
+        return Err(Error::ConcentrationCap);
+    }
+
+    let wallet = wallet_reserved(&env, &quote.trader) + quote.max_payout;
+    let wallet_cap = (available * p.wallet_cap_bps as i128 / BPS).min(p.wallet_cap_max);
+    if wallet > wallet_cap {
+        return Err(Error::WalletCapExceeded);
+    }
+
+    Ok((v, side, wallet))
+}
+
+fn check_position(env: &Env, quote: &Quote, params: &Params) -> Result<(), Error> {
+    let allowed = env
+        .storage()
+        .instance()
+        .get(&Key::Perpdex(quote.perpdex.clone()))
+        .unwrap_or(false);
+    if !allowed {
+        return Err(Error::PerpdexNotAllowed);
+    }
+
+    let position =
+        position::get(env, &quote.perpdex, &quote.position_id).ok_or(Error::PositionMismatch)?;
+
+    if position.status != PositionStatus::Open
+        || position.owner != quote.trader
+        || position.asset != quote.asset
+        || position.direction != quote.direction
+        || position.size < quote.qty
+    {
+        return Err(Error::PositionMismatch);
+    }
+
+    if (position.mark_price - quote.p_start).abs() * BPS
+        > quote.p_start * params.mark_tol_bps as i128
+    {
+        return Err(Error::MarkMoved);
+    }
+
+    let now = env.ledger().timestamp();
+    if now < position.open_ts + params.min_position_age as u64 {
+        return Err(Error::PositionTooNew);
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

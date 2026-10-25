@@ -1,25 +1,42 @@
 extern crate std;
 
+mod binding;
+mod caps;
+//mod early;
+//mod governance;
+//mod settle;
+
 use super::*;
 use ed25519_dalek::{Signer, SigningKey};
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events as _, Ledger},
     token::{StellarAssetClient, TokenClient},
-    Address, BytesN, Env, IntoVal, Map, Symbol, TryFromVal, Val,
+    vec, Address, BytesN, Env, Event, IntoVal, Map, Symbol, TryFromVal, Val,
 };
 use std::{cell::Cell, vec::Vec};
+use tosbi_mock_oracle::{Asset, MockOracle, MockOracleClient};
+use tosbi_mock_perpdex::{MockPerpdex, MockPerpdexClient};
 
 const USDC: i128 = 10_000_000;
 const NOW: u64 = 1_000_000;
-const WEEK: u64 = 7 * 86_400;
+const DAY: u64 = 86_400;
+const WEEK: u64 = 7 * DAY;
+/// Scales a 7-decimal price to the oracle's 14 decimals.
+const PX: i128 = 10_000_000;
+/// $0.20 with 7 decimals.
+const XLM: i128 = 2_000_000;
 
 struct T {
     env: Env,
     id: Address,
     token: Address,
     admin: Address,
+    owner: Address,
+    operator: Address,
     treasury: Address,
+    oracle: Address,
+    perpdex: Address,
     key: SigningKey,
     nonce: Cell<u64>,
 }
@@ -31,29 +48,75 @@ impl T {
     fn token(&self) -> TokenClient<'_> {
         TokenClient::new(&self.env, &self.token)
     }
+    fn dex(&self) -> MockPerpdexClient<'_> {
+        MockPerpdexClient::new(&self.env, &self.perpdex)
+    }
+    fn now(&self) -> u64 {
+        self.env.ledger().timestamp()
+    }
     fn trader(&self, funds: i128) -> Address {
         let a = Address::generate(&self.env);
-        StellarAssetClient::new(&self.env, &self.token).mint(&a, &funds);
+        if funds > 0 {
+            StellarAssetClient::new(&self.env, &self.token).mint(&a, &funds);
+        }
         a
     }
     fn deposit(&self, amount: i128) {
         let lp = self.trader(amount);
         self.c().deposit_capital(&lp, &amount);
     }
+    /// Sets the oracle record covering `ts` to a 7-decimal price.
+    fn feed(&self, asset: &str, ts: u64, price: i128) {
+        MockOracleClient::new(&self.env, &self.oracle).set(
+            &Symbol::new(&self.env, asset),
+            &ts,
+            &(price * PX),
+        );
+    }
+    fn mark(&self, asset: &str) -> i128 {
+        let a = Asset::Other(Symbol::new(&self.env, asset));
+        MockOracleClient::new(&self.env, &self.oracle)
+            .lastprice(&a)
+            .unwrap()
+            .price
+            / PX
+    }
+    fn open(&self, owner: &Address, asset: &str, dir: Direction, size: i128) -> BytesN<32> {
+        let d = match dir {
+            Direction::Long => tosbi_mock_perpdex::Direction::Long,
+            Direction::Short => tosbi_mock_perpdex::Direction::Short,
+        };
+        self.dex()
+            .open(owner, &Symbol::new(&self.env, asset), &d, &size)
+    }
+    /// XLM long at $0.20 covering down to $0.15, on a fresh position sized to the quote.
     fn quote(&self, trader: &Address, amount: i128, max_payout: i128, premium: i128) -> Quote {
+        let pos = self.open(trader, "XLM", Direction::Long, amount * 5);
+        self.quote_on(trader, pos, amount, max_payout, premium)
+    }
+    fn quote_on(
+        &self,
+        trader: &Address,
+        position_id: BytesN<32>,
+        amount: i128,
+        max_payout: i128,
+        premium: i128,
+    ) -> Quote {
         let n = self.nonce.get();
         self.nonce.set(n + 1);
-        let now = self.env.ledger().timestamp();
+        let now = self.now();
         Quote {
             vault: self.id.clone(),
+            perpdex: self.perpdex.clone(),
+            position_id,
             trader: trader.clone(),
             asset: symbol_short!("XLM"),
             direction: Direction::Long,
             amount,
             qty: amount * 5,
-            p_start: 2_000_000,
+            p_start: XLM,
             p_end: 1_500_000,
-            duration: 86_400,
+            duration: DAY,
             max_payout,
             premium,
             fee: amount * 30 / 10_000,
@@ -62,6 +125,22 @@ impl T {
             expires_at: now + 30,
             nonce: n,
         }
+    }
+    /// 1,000 USDC on a fresh `asset`/`dir` position at the current oracle price, 25% range.
+    fn quote_for(&self, trader: &Address, asset: &str, dir: Direction, max_payout: i128) -> Quote {
+        let px = self.mark(asset);
+        let qty = 1_000 * USDC * i128::from(UNIT) / px;
+        let pos = self.open(trader, asset, dir, qty);
+        let mut q = self.quote_on(trader, pos, 1_000 * USDC, max_payout, USDC);
+        q.asset = Symbol::new(&self.env, asset);
+        q.direction = dir;
+        q.qty = qty;
+        q.p_start = px;
+        q.p_end = match dir {
+            Direction::Long => px * 3 / 4,
+            Direction::Short => px * 5 / 4,
+        };
+        q
     }
     fn sign_with(&self, key: &SigningKey, q: &Quote) -> BytesN<64> {
         let msg: Vec<u8> = q.clone().to_xdr(&self.env).iter().collect();
@@ -86,6 +165,13 @@ impl T {
             s
         );
         assert!(self.token().balance(&self.id) >= s.capital);
+        let mut exposure = 0;
+        for asset in [symbol_short!("XLM"), symbol_short!("BTC")] {
+            for dir in [Direction::Long, Direction::Short] {
+                exposure += self.c().exposure(&asset, &dir);
+            }
+        }
+        assert_eq!(exposure, s.reserved, "exposure out of sync with reserved");
     }
 }
 
@@ -97,6 +183,17 @@ fn params(wallet_cap_bps: u32) -> Params {
         wallet_cap_max: 1_000_000 * USDC,
         activation_delay: 300,
         withdraw_delay: WEEK,
+        util_cap_bps: 10_000,
+        side_cap_bps: 10_000,
+        asset_cap_bps: 10_000,
+        mark_tol_bps: 50,
+        close_tol_bps: 150,
+        min_position_age: 0,
+        record_cap_bps: 1_500,
+        stale_max: 7_200,
+        big_payout: 10_000 * USDC,
+        share_pdx_bps: 0,
+        timelock: DAY,
     }
 }
 
@@ -104,26 +201,43 @@ fn setup_with(p: Params) -> T {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(NOW);
-    let admin = Address::generate(&env);
-    let treasury = Address::generate(&env);
     let token = env
         .register_stellar_asset_contract_v2(Address::generate(&env))
         .address();
     let key = SigningKey::from_bytes(&[7u8; 32]);
-    let pricer = BytesN::from_array(&env, &key.verifying_key().to_bytes());
+    let oracle = env.register(MockOracle, ());
+    let perpdex = env.register(MockPerpdex, (oracle.clone(),));
+    let cfg = Config {
+        admin: Address::generate(&env),
+        owner: Address::generate(&env),
+        operator: Address::generate(&env),
+        token: token.clone(),
+        treasury: Address::generate(&env),
+        pricer: BytesN::from_array(&env, &key.verifying_key().to_bytes()),
+        oracle: oracle.clone(),
+        params: p,
+    };
+    let assets = vec![&env, symbol_short!("XLM"), symbol_short!("BTC")];
     let id = env.register(
         ProtectionContract,
-        (admin.clone(), token.clone(), treasury.clone(), pricer, p),
+        (cfg.clone(), assets, vec![&env, perpdex.clone()]),
     );
-    T {
+    let t = T {
         env,
         id,
         token,
-        admin,
-        treasury,
+        admin: cfg.admin,
+        owner: cfg.owner,
+        operator: cfg.operator,
+        treasury: cfg.treasury,
+        oracle,
+        perpdex,
         key,
         nonce: Cell::new(1),
-    }
+    };
+    t.feed("XLM", NOW, XLM);
+    t.feed("BTC", NOW, 100_000 * USDC);
+    t
 }
 
 fn setup() -> T {
@@ -140,7 +254,7 @@ fn state(capital: i128, reserved: i128, locked: i128, unlock_at: u64) -> VaultSt
 }
 
 #[test]
-fn h1_deposit_buy_release() {
+fn h1_deposit_buy() {
     let t = setup();
     t.deposit(10_000 * USDC);
     let trader = t.trader(100 * USDC);
@@ -155,18 +269,13 @@ fn h1_deposit_buy_release() {
     assert_eq!(t.c().wallet_reserved(&trader), 250 * USDC);
     let p = t.c().protection(&id).unwrap();
     assert_eq!(
-        (p.t_mint, p.t_active, p.t_expire),
-        (NOW, NOW + 300, NOW + 86_400)
+        (p.t_mint, p.t_active, p.t_expire, p.window),
+        (NOW, NOW + 300, NOW + DAY, 1_206)
     );
     assert_eq!(
         (p.status, p.max_payout, p.trader.clone()),
         (Status::Active, 250 * USDC, trader.clone())
     );
-
-    t.c().release(&trader, &id);
-    assert_eq!(t.c().state(), state(10_026, 0, 0, 0));
-    assert_eq!(t.c().wallet_reserved(&trader), 0);
-    assert_eq!(t.c().protection(&id).unwrap().status, Status::Released);
 }
 
 #[test]
@@ -174,13 +283,13 @@ fn h4_withdraw_after_delay() {
     let t = setup();
     t.deposit(1_000 * USDC);
     assert_eq!(t.c().withdraw_request(&(400 * USDC)), NOW + WEEK);
-    assert_eq!(t.env.auths()[0].0, t.admin);
+    assert_eq!(t.env.auths()[0].0, t.owner);
     assert_eq!(t.c().state(), state(1_000, 0, 400, NOW + WEEK));
 
     t.env.ledger().set_timestamp(NOW + WEEK);
     assert_eq!(t.c().withdraw_execute(), 400 * USDC);
     assert_eq!(t.c().state(), state(600, 0, 0, 0));
-    assert_eq!(t.token().balance(&t.admin), 400 * USDC);
+    assert_eq!(t.token().balance(&t.owner), 400 * USDC);
 }
 
 #[test]
@@ -335,13 +444,15 @@ fn x4_malformed_quote_fields() {
     t.deposit(1_000 * USDC);
     let trader = t.trader(100 * USDC);
     let base = t.quote(&trader, 100 * USDC, 25 * USDC, USDC);
-    let cases: [fn(&mut Quote); 6] = [
+    let cases: [fn(&mut Quote); 8] = [
         |q| q.premium = 0,
         |q| q.premium = -1,
         |q| q.fee = -1,
         |q| q.max_payout = 0,
         |q| q.max_payout = q.amount + 1,
         |q| q.duration = 0,
+        |q| q.qty = 0,
+        |q| q.p_start = 0,
     ];
     for f in cases {
         let mut q = base.clone();
@@ -404,23 +515,6 @@ fn x7_insufficient_trader_balance_reverts_everything() {
     assert_eq!(t.c().protection(&0), None);
     StellarAssetClient::new(&t.env, &t.token).mint(&trader, &(10 * USDC));
     t.c().buy_protection(&q, &t.sign(&q));
-}
-
-#[test]
-fn x8_release_errors() {
-    let t = setup();
-    t.deposit(1_000 * USDC);
-    let trader = t.trader(100 * USDC);
-    assert_eq!(t.c().try_release(&t.admin, &0), Err(Ok(Error::NotFound)));
-    let id = t
-        .buy(&t.quote(&trader, 100 * USDC, 25 * USDC, USDC))
-        .unwrap();
-    t.c().release(&t.admin, &id);
-    assert_eq!(
-        t.c().try_release(&t.admin, &id),
-        Err(Ok(Error::AlreadyReleased))
-    );
-    assert_eq!(t.c().state(), state(1_001, 0, 0, 0));
 }
 
 #[test]
@@ -499,84 +593,7 @@ fn c3_withdrawal_between_quote_and_buy() {
 }
 
 #[test]
-fn c4_release_frees_capacity() {
-    let t = setup();
-    t.deposit(100 * USDC);
-    let trader = t.trader(100 * USDC);
-    let id = t
-        .buy(&t.quote(&trader, 400 * USDC, 100 * USDC, USDC))
-        .unwrap();
-    let q = t.quote(&trader, 400 * USDC, 100 * USDC, USDC);
-    assert_eq!(t.buy(&q), Err(Error::InsufficientCapital));
-    t.c().release(&trader, &id);
-    t.buy(&t.quote(&trader, 400 * USDC, 100 * USDC, USDC))
-        .unwrap();
-}
-
-#[test]
-fn c5_random_sequences_keep_full_backing() {
-    for seed in 1..=20u64 {
-        let t = setup();
-        let traders: Vec<Address> = (0..4).map(|_| t.trader(1_000_000 * USDC)).collect();
-        let mut rng = seed;
-        let mut next = |n: u64| {
-            rng = rng
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            (rng >> 33) % n
-        };
-        let mut ids: Vec<u64> = Vec::new();
-        for _ in 0..60 {
-            let before = t.c().state();
-            let ok = match next(5) {
-                0 => {
-                    let lp = t.trader(10_000 * USDC);
-                    t.c()
-                        .try_deposit_capital(&lp, &((next(5_000) as i128 + 1) * USDC))
-                        .is_ok()
-                }
-                1 | 2 => {
-                    let trader = &traders[next(4) as usize];
-                    let amount = (next(10_000) as i128 + 20) * USDC;
-                    let max = amount * (next(50) as i128 + 1) / 100;
-                    let r = t.buy(&t.quote(trader, amount, max, amount / 50 + 1));
-                    if let Ok(id) = r {
-                        ids.push(id);
-                    }
-                    r.is_ok()
-                }
-                3 if !ids.is_empty() => {
-                    let id = ids[next(ids.len() as u64) as usize];
-                    t.c().try_release(&t.admin, &id).is_ok()
-                }
-                _ => {
-                    if t.c().state().unlock_at != 0 {
-                        t.env
-                            .ledger()
-                            .set_timestamp(t.env.ledger().timestamp() + WEEK);
-                        t.c().try_withdraw_execute().is_ok()
-                    } else {
-                        t.c()
-                            .try_withdraw_request(&((next(3_000) as i128 + 1) * USDC))
-                            .is_ok()
-                    }
-                }
-            };
-            if !ok {
-                assert_eq!(
-                    t.c().state(),
-                    before,
-                    "failed call changed state (seed {})",
-                    seed
-                );
-            }
-            t.assert_invariant();
-        }
-    }
-}
-
-#[test]
-fn s1_s2_admin_only_withdrawals() {
+fn s1_s2_owner_only_withdrawals() {
     let t = setup();
     t.deposit(1_000 * USDC);
     t.env.set_auths(&[]);
@@ -589,23 +606,6 @@ fn s1_s2_admin_only_withdrawals() {
     t.env.set_auths(&[]);
     t.env.ledger().set_timestamp(NOW + WEEK);
     assert!(matches!(t.c().try_withdraw_execute(), Err(Err(_))));
-}
-
-#[test]
-fn s3_release_only_by_admin_or_owner() {
-    let t = setup();
-    t.deposit(1_000 * USDC);
-    let trader = t.trader(100 * USDC);
-    let id = t
-        .buy(&t.quote(&trader, 100 * USDC, 25 * USDC, USDC))
-        .unwrap();
-    let stranger = Address::generate(&t.env);
-    assert_eq!(
-        t.c().try_release(&stranger, &id),
-        Err(Ok(Error::Unauthorized))
-    );
-    t.env.set_auths(&[]);
-    assert!(matches!(t.c().try_release(&trader, &id), Err(Err(_))));
 }
 
 #[test]
@@ -634,8 +634,9 @@ fn s8_direct_transfer_does_not_add_capacity() {
     );
 }
 
-const JS_XDR: &str = "0000001100000001000000100000000f00000006616d6f756e7400000000000a000000000000000000000002540be4000000000f0000000561737365740000000000000f00000003584c4d000000000f00000009646972656374696f6e00000000000003000000000000000f000000086475726174696f6e0000000500000000000151800000000f0000000a657870697265735f617400000000000500000000000f425e0000000f00000003666565000000000a00000000000000000000000001c9c3800000000f0000000a6d61785f7061796f757400000000000a0000000000000000000000009502f9000000000f000000056e6f6e636500000000000005000000000000002a0000000f00000005705f656e640000000000000a0000000000000000000000000016e3600000000f00000007705f7374617274000000000a000000000000000000000000001e84800000000f000000077072656d69756d000000000a0000000000000000000000000f485a800000000f00000003717479000000000a00000000000000000000000ba43b74000000000f0000000971756f7465645f61740000000000000500000000000f42400000000f000000067472616465720000000000120000000102020202020202020202020202020202020202020202020202020202020202020000000f000000057661756c74000000000000120000000101010101010101010101010101010101010101010101010101010101010101010000000f00000007766f6c5f627073000000000300002710";
-const JS_SIG: &str = "dddebb2eabfc3881b728e2430be21fa3980269dad817bc61925049820dee0ba92bfeced96055fe290b163a0d0e3005e38300f5246a96deae8f22b1ae230bc903";
+// Generated by pricer/test/quote.test.ts (FIXTURE). Regenerate both together.
+const JS_XDR: &str = "0000001100000001000000120000000f00000006616d6f756e7400000000000a000000000000000000000002540be4000000000f0000000561737365740000000000000f00000003584c4d000000000f00000009646972656374696f6e00000000000003000000000000000f000000086475726174696f6e0000000500000000000151800000000f0000000a657870697265735f617400000000000500000000000f425e0000000f00000003666565000000000a00000000000000000000000001c9c3800000000f0000000a6d61785f7061796f757400000000000a0000000000000000000000009502f9000000000f000000056e6f6e636500000000000005000000000000002a0000000f00000005705f656e640000000000000a0000000000000000000000000016e3600000000f00000007705f7374617274000000000a000000000000000000000000001e84800000000f000000077065727064657800000000120000000103030303030303030303030303030303030303030303030303030303030303030000000f0000000b706f736974696f6e5f6964000000000d0000002000000000000000000000000000000000000000000000000000000000000000000000000f000000077072656d69756d000000000a0000000000000000000000000f485a800000000f00000003717479000000000a00000000000000000000000ba43b74000000000f0000000971756f7465645f61740000000000000500000000000f42400000000f000000067472616465720000000000120000000102020202020202020202020202020202020202020202020202020202020202020000000f000000057661756c74000000000000120000000101010101010101010101010101010101010101010101010101010101010101010000000f00000007766f6c5f627073000000000300002710";
+const JS_SIG: &str = "b5bd05b88444d81275d85ddb031c58294b11b2cabe10de94165733bed93c218c88a456ebf6d4eb925dd2b2ba07e66f79229c17839d9ff8317ce3c22a2be3e90e";
 
 fn unhex(s: &str) -> Vec<u8> {
     (0..s.len())
@@ -649,30 +650,42 @@ fn h5_js_signed_quote_is_accepted() {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().set_timestamp(NOW);
-    let vault = Address::from_str(
-        &env,
-        "CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526",
-    );
-    let trader = Address::from_str(
-        &env,
-        "CABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAFNSZ",
-    );
+    let at = |c: &str| Address::from_str(&env, c);
+    let vault = at("CAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQC526");
+    let trader = at("CABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAFNSZ");
+    let perpdex = at("CABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGCK3");
     let token = env
         .register_stellar_asset_contract_v2(Address::generate(&env))
         .address();
-    let pricer = BytesN::from_array(
-        &env,
-        &SigningKey::from_bytes(&[7u8; 32])
-            .verifying_key()
-            .to_bytes(),
+    let oracle = env.register(MockOracle, ());
+    MockOracleClient::new(&env, &oracle).set(&symbol_short!("XLM"), &NOW, &(XLM * PX));
+    env.register_at(&perpdex, MockPerpdex, (oracle.clone(),));
+    let position_id = MockPerpdexClient::new(&env, &perpdex).open(
+        &trader,
+        &symbol_short!("XLM"),
+        &tosbi_mock_perpdex::Direction::Long,
+        &(5_000 * USDC),
     );
     let lp = Address::generate(&env);
+    let cfg = Config {
+        admin: lp.clone(),
+        owner: lp.clone(),
+        operator: lp.clone(),
+        token: token.clone(),
+        treasury: Address::generate(&env),
+        pricer: BytesN::from_array(
+            &env,
+            &SigningKey::from_bytes(&[7u8; 32])
+                .verifying_key()
+                .to_bytes(),
+        ),
+        oracle,
+        params: params(10_000),
+    };
     let args = (
-        lp.clone(),
-        token.clone(),
-        Address::generate(&env),
-        pricer,
-        params(10_000),
+        cfg,
+        vec![&env, symbol_short!("XLM")],
+        vec![&env, perpdex.clone()],
     );
     env.register_at(&vault, ProtectionContract, args);
     let sac = StellarAssetClient::new(&env, &token);
@@ -683,6 +696,8 @@ fn h5_js_signed_quote_is_accepted() {
 
     let q = Quote {
         vault: vault.clone(),
+        perpdex,
+        position_id,
         trader: trader.clone(),
         asset: symbol_short!("XLM"),
         direction: Direction::Long,
