@@ -3,6 +3,8 @@
 mod position;
 pub use position::{Position, PositionStatus};
 
+mod oracle;
+
 use soroban_sdk::{
     contract, contractclient, contracterror, contractevent, contractimpl, contracttype, token,
     xdr::ToXdr, Address, BytesN, Env, Symbol, Vec,
@@ -239,6 +241,16 @@ pub struct WithdrawalExecuted {
     pub amount: i128,
 }
 
+#[contractevent]
+pub struct Settled {
+    #[topic]
+    pub id: u64,
+    pub price: i128,
+    pub payout: i128,
+    pub early: bool,
+    pub degraded: bool,
+}
+
 #[contract]
 pub struct ProtectionContract;
 
@@ -451,6 +463,37 @@ impl ProtectionContract {
     pub fn wallet_reserved(env: Env, trader: Address) -> i128 {
         wallet_reserved(&env, &trader)
     }
+
+    pub fn settle(env: Env, id: u64) -> Result<i128, Error> {
+        let mut protection = active(&env, id)?;
+        let now = env.ledger().timestamp();
+        if now < protection.t_expire {
+            return Err(Error::NotExpired);
+        }
+
+        let cfg = config(&env);
+        let twap_price = oracle::twap(
+            &env,
+            &cfg.oracle,
+            &cfg.params,
+            &protection.asset,
+            protection.t_expire,
+            protection.window,
+        );
+        let (price, degraded) = match twap_price {
+            Some(price) => (price, false),
+            None => {
+                if now < protection.t_expire + cfg.params.stale_max {
+                    return Err(Error::OracleStale);
+                }
+                let fallback =
+                    oracle::last(&env, &cfg.oracle, &protection.asset).ok_or(Error::OracleStale)?;
+                (fallback, true)
+            }
+        };
+
+        finish(&env, &cfg, &mut protection, price, false, degraded)
+    }
 }
 
 fn config(env: &Env) -> Config {
@@ -662,6 +705,81 @@ fn check_position(env: &Env, quote: &Quote, params: &Params) -> Result<(), Error
     }
 
     Ok(())
+}
+
+fn active(env: &Env, id: u64) -> Result<Protection, Error> {
+    let protection: Protection = env
+        .storage()
+        .persistent()
+        .get(&Key::Protection(id))
+        .ok_or(Error::NotFound)?;
+    if protection.status == Status::Settled {
+        return Err(Error::AlreadySettled);
+    }
+    Ok(protection)
+}
+
+fn finish(
+    env: &Env,
+    cfg: &Config,
+    p: &mut Protection,
+    price: i128,
+    early: bool,
+    degraded: bool,
+) -> Result<i128, Error> {
+    let gap = match p.direction {
+        Direction::Long => p.p_start - price,
+        Direction::Short => price - p.p_start,
+    };
+
+    let payout = if gap <= 0 {
+        0
+    } else {
+        (p.qty * gap / UNIT as i128).min(p.max_payout)
+    };
+
+    let mut v = vault(env);
+    v.capital -= payout;
+    v.reserved -= p.max_payout;
+    set_vault(env, &v);
+
+    let mut exposure = exposure(env, &p.asset, &p.direction);
+    exposure -= p.max_payout;
+    set_exposure(env, &p.asset, &p.direction, exposure);
+
+    let mut wallet = wallet_reserved(env, &p.trader.clone());
+    wallet -= p.max_payout;
+    set_persistent(env, &Key::WalletReserved(p.trader.clone()), &wallet);
+
+    env.storage()
+        .persistent()
+        .remove(&Key::Covered(p.perpdex.clone(), p.position_id.clone()));
+
+    p.status = Status::Settled;
+    p.settle_price = price;
+    p.payout = payout;
+    set_persistent(env, &Key::Protection(p.id), p);
+
+    if payout > 0 {
+        pay(
+            env,
+            &cfg.token,
+            &env.current_contract_address(),
+            &p.trader.clone(),
+            payout,
+        )?;
+    }
+
+    Settled {
+        id: p.id,
+        price: price,
+        payout: payout,
+        early: early,
+        degraded: degraded,
+    }
+    .publish(env);
+
+    Ok(payout)
 }
 
 #[cfg(test)]

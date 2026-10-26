@@ -4,7 +4,7 @@ mod binding;
 mod caps;
 //mod early;
 //mod governance;
-//mod settle;
+mod settle;
 
 use super::*;
 use ed25519_dalek::{Signer, SigningKey};
