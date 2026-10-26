@@ -92,19 +92,11 @@ pub fn twap(
 pub fn price_at(env: &Env, oracle: &Address, asset: &Symbol, ts: u64) -> Option<i128> {
     let client = OracleClient::new(env, oracle);
     let result = client.price(&Asset::Other(asset.clone()), &ts);
-    let price_at = match result {
-        Some(data) => Some(to_7(data.price, client.decimals())),
-        _ => None,
-    };
-    price_at
+    result.map(|data| to_7(data.price, client.decimals()))
 } // Task 3
 
 pub fn last(env: &Env, oracle: &Address, asset: &Symbol) -> Option<i128> {
     let client = OracleClient::new(env, oracle);
     let result = client.lastprice(&Asset::Other(asset.clone()));
-    let last = match result {
-        Some(data) => Some(to_7(data.price, client.decimals())),
-        _ => None,
-    };
-    last
+    result.map(|data| to_7(data.price, client.decimals()))
 }

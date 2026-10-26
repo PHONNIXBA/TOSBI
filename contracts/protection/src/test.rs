@@ -3,7 +3,7 @@ extern crate std;
 mod binding;
 mod caps;
 mod early;
-//mod governance;
+mod governance;
 mod settle;
 
 use super::*;

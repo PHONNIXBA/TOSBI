@@ -5,6 +5,9 @@ pub use position::{Position, PositionStatus};
 
 mod oracle;
 
+mod governance;
+pub use governance::{Change, PendingChange};
+
 use soroban_sdk::{
     contract, contractclient, contracterror, contractevent, contractimpl, contracttype, token,
     xdr::ToXdr, Address, BytesN, Env, Symbol, Vec,
@@ -344,7 +347,7 @@ impl ProtectionContract {
                 t_active: now + p.activation_delay,
                 t_expire: now + quote.duration,
                 status: Status::Active,
-                window: window,
+                window,
                 settle_price: 0,
                 payout: 0,
             },
@@ -497,9 +500,10 @@ impl ProtectionContract {
 
     pub fn settle_early(env: Env, id: u64) -> Result<i128, Error> {
         let mut protection = active(&env, id)?;
-        
-        let position = position::get(&env, &protection.perpdex, &protection.position_id).ok_or(Error::NotClosed)?;
-        
+
+        let position = position::get(&env, &protection.perpdex, &protection.position_id)
+            .ok_or(Error::NotClosed)?;
+
         let reduced = position.status == PositionStatus::Open && position.size < protection.qty;
         if position.status == PositionStatus::Open && !reduced {
             return Err(Error::NotClosed);
@@ -522,19 +526,14 @@ impl ProtectionContract {
             return finish(&env, &cfg, &mut protection, price, true, false);
         }
 
-        let reference = oracle::price_at(
-            &env, 
-            &cfg.oracle, 
-            &protection.asset, 
-            ts
-        ).or_else(|| oracle::last(
-            &env, 
-            &cfg.oracle, 
-            &protection.asset
-        )).ok_or(Error::OracleStale)?;
+        let reference = oracle::price_at(&env, &cfg.oracle, &protection.asset, ts)
+            .or_else(|| oracle::last(&env, &cfg.oracle, &protection.asset))
+            .ok_or(Error::OracleStale)?;
 
         let price = if let Some(close) = position.close_price {
-            if !reduced && (close - reference).abs() * BPS <= reference * (cfg.params.close_tol_bps as i128) {
+            if !reduced
+                && (close - reference).abs() * BPS <= reference * (cfg.params.close_tol_bps as i128)
+            {
                 close
             } else {
                 reference
@@ -609,14 +608,14 @@ pub fn window_for(duration: u64, max_payout: i128, p: &Params) -> u64 {
 fn exposure(env: &Env, asset: &Symbol, direction: &Direction) -> i128 {
     env.storage()
         .instance()
-        .get(&Key::Exposure(asset.clone(), direction.clone()))
+        .get(&Key::Exposure(asset.clone(), *direction))
         .unwrap_or(0)
 }
 
 pub fn set_exposure(env: &Env, asset: &Symbol, direction: &Direction, amount: i128) {
     env.storage()
         .instance()
-        .set(&Key::Exposure(asset.clone(), direction.clone()), &amount)
+        .set(&Key::Exposure(asset.clone(), *direction), &amount)
 }
 
 pub fn share(amount: i128, bps: i128) -> i128 {
@@ -713,7 +712,7 @@ fn check_capacity(env: &Env, quote: &Quote, cfg: &Config) -> Result<(Vault, i128
         return Err(Error::ConcentrationCap);
     }
 
-    let wallet = wallet_reserved(&env, &quote.trader) + quote.max_payout;
+    let wallet = wallet_reserved(env, &quote.trader) + quote.max_payout;
     let wallet_cap = (available * p.wallet_cap_bps as i128 / BPS).min(p.wallet_cap_max);
     if wallet > wallet_cap {
         return Err(Error::WalletCapExceeded);
@@ -751,7 +750,7 @@ fn check_position(env: &Env, quote: &Quote, params: &Params) -> Result<(), Error
     }
 
     let now = env.ledger().timestamp();
-    if now < position.open_ts + params.min_position_age as u64 {
+    if now < position.open_ts + params.min_position_age {
         return Err(Error::PositionTooNew);
     }
 
@@ -823,10 +822,10 @@ fn finish(
 
     Settled {
         id: p.id,
-        price: price,
-        payout: payout,
-        early: early,
-        degraded: degraded,
+        price,
+        payout,
+        early,
+        degraded,
     }
     .publish(env);
 
