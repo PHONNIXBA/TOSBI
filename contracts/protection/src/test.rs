@@ -2,7 +2,7 @@ extern crate std;
 
 mod binding;
 mod caps;
-//mod early;
+mod early;
 //mod governance;
 mod settle;
 

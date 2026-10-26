@@ -494,6 +494,57 @@ impl ProtectionContract {
 
         finish(&env, &cfg, &mut protection, price, false, degraded)
     }
+
+    pub fn settle_early(env: Env, id: u64) -> Result<i128, Error> {
+        let mut protection = active(&env, id)?;
+        
+        let position = position::get(&env, &protection.perpdex, &protection.position_id).ok_or(Error::NotClosed)?;
+        
+        let reduced = position.status == PositionStatus::Open && position.size < protection.qty;
+        if position.status == PositionStatus::Open && !reduced {
+            return Err(Error::NotClosed);
+        }
+
+        let now = env.ledger().timestamp();
+        let ts = if reduced {
+            now
+        } else {
+            position.close_ts.unwrap_or(now)
+        };
+
+        if ts >= protection.t_expire {
+            return Self::settle(env, id);
+        }
+
+        let cfg = config(&env);
+        if ts < protection.t_active {
+            let price = protection.p_start;
+            return finish(&env, &cfg, &mut protection, price, true, false);
+        }
+
+        let reference = oracle::price_at(
+            &env, 
+            &cfg.oracle, 
+            &protection.asset, 
+            ts
+        ).or_else(|| oracle::last(
+            &env, 
+            &cfg.oracle, 
+            &protection.asset
+        )).ok_or(Error::OracleStale)?;
+
+        let price = if let Some(close) = position.close_price {
+            if !reduced && (close - reference).abs() * BPS <= reference * (cfg.params.close_tol_bps as i128) {
+                close
+            } else {
+                reference
+            }
+        } else {
+            reference
+        };
+
+        finish(&env, &cfg, &mut protection, price, true, false)
+    }
 }
 
 fn config(env: &Env) -> Config {
