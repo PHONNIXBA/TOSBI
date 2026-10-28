@@ -1,0 +1,59 @@
+{
+  "asset": "XLM",
+  "source": "Binance XLM-USD closes: 30d of 5m for buckets <= 12h, 90d of 1h for >= 1d",
+  "generated_at": "2026-10-28T09:02:18.196Z",
+  "r_ref": 0.25,
+  "floor": 0.6,
+  "cap": 3,
+  "buckets": {
+    "900": {
+      "down": 0.6,
+      "up": 0.6,
+      "raw_down": 0.5483,
+      "raw_up": 0.5192,
+      "samples": 8638
+    },
+    "3600": {
+      "down": 0.6,
+      "up": 0.6,
+      "raw_down": 0.5692,
+      "raw_up": 0.5092,
+      "samples": 8629
+    },
+    "14400": {
+      "down": 0.6154,
+      "up": 0.6,
+      "raw_down": 0.6154,
+      "raw_up": 0.4779,
+      "samples": 8593
+    },
+    "43200": {
+      "down": 0.6944,
+      "up": 0.6,
+      "raw_down": 0.6944,
+      "raw_up": 0.413,
+      "samples": 8497
+    },
+    "86400": {
+      "down": 0.627,
+      "up": 0.6531,
+      "raw_down": 0.627,
+      "raw_up": 0.6531,
+      "samples": 2137
+    },
+    "259200": {
+      "down": 0.6005,
+      "up": 0.6231,
+      "raw_down": 0.6005,
+      "raw_up": 0.6231,
+      "samples": 2089
+    },
+    "604800": {
+      "down": 0.6309,
+      "up": 0.7287,
+      "raw_down": 0.6309,
+      "raw_up": 0.7287,
+      "samples": 1993
+    }
+  }
+}

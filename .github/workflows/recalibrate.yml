@@ -1,0 +1,52 @@
+name: Recalibrate volatility tables
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+
+jobs:
+  recalibrate:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: pricer
+
+    env:
+      VAULT_ID: ${{vars.VAULT_ID}}
+      RPC_URL: ${{vars.RPC_URL}}
+      NETWORK_PASSPHRASE: ${{vars.NETWORK_PASSPHRASE}}
+      OPERATOR_SECRET: ${{secrets.OPERATOR_SECRET}}
+      CLOUDFLARE_API_TOKEN: ${{secrets.CLOUDFLARE_API_TOKEN}}
+      CLOUDFLARE_ACCOUNT_ID: ${{secrets.CLOUDFLARE_ACCOUNT_ID}}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Calibrate XLM
+        run: npm run calibrate -- XLM
+
+      - name: Calibrate BTC
+        run: npm run calibrate -- BTC
+
+      - name: Calibrate ETH
+        run: npm run calibrate -- ETH
+
+      - name: Generate volatility bundle and hash
+        run: node scripts/publish-vol.ts
+
+      - name: Upload volatility bundle to Cloudflare KV
+        run: npx wrangler kv key put vol-tables --path vol-bundle.json --binding KV --remote
+
+      - name: Pót volatility hash on-chain
+        run: node scripts/publish-vol.ts --post

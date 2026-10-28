@@ -1,0 +1,59 @@
+{
+  "asset": "BTC",
+  "source": "Binance BTC-USD closes: 30d of 5m for buckets <= 12h, 90d of 1h for >= 1d",
+  "generated_at": "2026-10-28T09:02:35.033Z",
+  "r_ref": 0.25,
+  "floor": 0.5,
+  "cap": 3,
+  "buckets": {
+    "900": {
+      "down": 0.5,
+      "up": 0.5,
+      "raw_down": 0.2702,
+      "raw_up": 0.2682,
+      "samples": 8638
+    },
+    "3600": {
+      "down": 0.5,
+      "up": 0.5,
+      "raw_down": 0.2729,
+      "raw_up": 0.2687,
+      "samples": 8629
+    },
+    "14400": {
+      "down": 0.5,
+      "up": 0.5,
+      "raw_down": 0.2709,
+      "raw_up": 0.257,
+      "samples": 8593
+    },
+    "43200": {
+      "down": 0.5,
+      "up": 0.5,
+      "raw_down": 0.2812,
+      "raw_up": 0.2498,
+      "samples": 8497
+    },
+    "86400": {
+      "down": 0.5,
+      "up": 0.5,
+      "raw_down": 0.2483,
+      "raw_up": 0.3778,
+      "samples": 2137
+    },
+    "259200": {
+      "down": 0.5,
+      "up": 0.5,
+      "raw_down": 0.2228,
+      "raw_up": 0.4667,
+      "samples": 2089
+    },
+    "604800": {
+      "down": 0.5,
+      "up": 0.5939,
+      "raw_down": 0.1828,
+      "raw_up": 0.5939,
+      "samples": 1993
+    }
+  }
+}

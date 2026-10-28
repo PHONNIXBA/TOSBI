@@ -4,3 +4,4 @@ node_modules/
 .wrangler/
 test_snapshots/
 .gstack/
+/pricer/vol-bundle.json

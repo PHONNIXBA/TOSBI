@@ -2,28 +2,65 @@
 import { writeFileSync } from "node:fs";
 import { BUCKETS, expectedLoss, impliedSigma, PARAMS, YEAR_SECS, type Direction } from "../src/pricing.ts";
 
-const SYMBOL = "XLMUSDT";
-const API = "https://data-api.binance.vision/api/v3/klines";
+const asset = process.argv[2];
+if (asset !== "XLM" && asset !== "BTC" && asset !== "ETH") {
+  throw new Error("Usage: npm run calibrate -- <XLM|BTC|ETH>")
+}
+const SYMBOL = `${asset}-USD`;
+const API = `https://api.exchange.coinbase.com/products/${SYMBOL}/candles`;
 const R_REF = 0.25;
-const FLOOR = 0.6;
+const FLOORS = {
+  XLM: 0.6,
+  BTC: 0.5,
+  ETH: 0.5,
+};
+const FLOOR = FLOORS[asset];
 
-async function closes(interval: string, stepSecs: number, days: number): Promise<number[]> {
-  const out: number[] = [];
-  const end = Date.now();
+type Candle = [
+  time: number,
+  low: number,
+  high: number,
+  open: number,
+  close: number,
+  volume: number
+];
+
+async function closes(stepSecs: number, days: number): Promise<number[]> {
+  const stepMs = stepSecs * 1000;
+  const end = Math.floor(Date.now() / stepMs) * stepMs;
   let start = end - days * 86_400_000;
-  while (start < end) {
-    const res = await fetch(`${API}?symbol=${SYMBOL}&interval=${interval}&startTime=${start}&limit=1000`);
-    if (!res.ok) throw new Error(`klines ${interval}: HTTP ${res.status}`);
-    const rows = (await res.json()) as [number, string, string, string, string][];
-    if (rows.length === 0) break;
-    out.push(...rows.map((r) => Number(r[4])));
-    start = rows[rows.length - 1][0] + stepSecs * 1000;
+  let cursor = end;
+  const byTime = new Map<number, number>();
+
+  while (cursor > start) {
+    const pageStart = Math.max(start, cursor - 300 * stepSecs * 1000);
+    const url = `${API}?granularity=${stepSecs}` +
+      `&start=${new Date(pageStart).toISOString()}` +
+      `&end=${new Date(cursor).toISOString()}`;
+
+    const res = await fetch(url, {
+      headers: {
+        "user-agent": "TOSBI-Pricer",
+      },
+    });
+    if (!res.ok) throw new Error(`Coinbase candles: HTTP ${res.status}`);
+    const rows = (await res.json()) as Candle[];
+    for (const row of rows) {
+      const time = row[0];
+      const close = row[4];
+
+      if (time * 1000 >= start && time * 1000 <= end) {
+        byTime.set(time, close);
+      }
+    }
+
+    cursor = pageStart - stepMs;
   }
-  return out;
+  return [...byTime.entries()].sort(([a], [b]) => a - b).map(([, close]) => close);
 }
 
 const round4 = (x: number) => Math.round(x * 10_000) / 10_000;
-const series = { short: await closes("5m", 300, 30), long: await closes("1h", 3_600, 90) };
+const series = { short: await closes(300, 30), long: await closes(3_600, 90) };
 
 const buckets = Object.fromEntries(
   BUCKETS.map((secs) => {
@@ -42,7 +79,7 @@ const buckets = Object.fromEntries(
 );
 
 const table = {
-  asset: "XLM",
+  asset: asset,
   source: `Binance ${SYMBOL} closes: 30d of 5m for buckets <= 12h, 90d of 1h for >= 1d`,
   generated_at: new Date().toISOString(),
   r_ref: R_REF,
@@ -50,5 +87,8 @@ const table = {
   cap: PARAMS.sigmaCap,
   buckets,
 };
-writeFileSync(new URL("../vol-table.json", import.meta.url), JSON.stringify(table, null, 2) + "\n");
+writeFileSync(
+  new URL(`../vol-tables/${asset}.json`, import.meta.url),
+  JSON.stringify(table, null, 2) + "\n"
+);
 console.table(buckets);
