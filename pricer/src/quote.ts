@@ -3,6 +3,8 @@ import type { Direction } from "./pricing.ts";
 
 export interface Quote {
   vault: string;
+  perpdex: string;
+  position_id: string;
   trader: string;
   asset: string;
   direction: Direction;
@@ -22,6 +24,8 @@ export interface Quote {
 
 const TYPES = {
   vault: "address",
+  perpdex: "address",
+  position_id: "bytes",
   trader: "address",
   asset: "symbol",
   direction: "u32",
@@ -44,7 +48,14 @@ export function quoteToScVal(q: Quote): xdr.ScVal {
   const keys = (Object.keys(TYPES) as (keyof Quote)[]).sort();
   return xdr.ScVal.scvMap(
     keys.map((k) => {
-      const v = k === "direction" ? (q.direction === "long" ? 0 : 1) : q[k];
+      let v;
+      if (k === "direction") {
+        v = q.direction === "long" ? 0 : 1;
+      } else if (k === "position_id") {
+        v = Buffer.from(q.position_id, "hex");
+      } else {
+        v = q[k];
+      }
       return new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(k), val: nativeToScVal(v, { type: TYPES[k] }) });
     }),
   );

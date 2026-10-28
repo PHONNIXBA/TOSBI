@@ -17,7 +17,7 @@ export interface Net {
   passphrase: string;
 }
 
-export const ERRORS = [
+export const ERRORS: string[] = [
   "",
   "InvalidAmount",
   "InvalidQuote",
@@ -106,6 +106,14 @@ export async function pay(n: Net, secret: string, asset: Asset, to: string, amou
   const tx = builder(n, await server(n).getAccount(kp.publicKey()))
     .addOperation(Operation.payment({ destination: to, asset, amount }))
     .build();
+  tx.sign(kp);
+  return submit(n, tx.toXDR());
+}
+
+export async function invokeAs(n: Net, secret: string, contract: string, method: string, args: xdr.ScVal[]): Promise<Receipt> {
+  const kp = Keypair.fromSecret(secret);
+  const unsignedXdr = await prepareInvoke(n, kp.publicKey(), contract, method, args);
+  const tx = TransactionBuilder.fromXDR(unsignedXdr, n.passphrase);
   tx.sign(kp);
   return submit(n, tx.toXDR());
 }
