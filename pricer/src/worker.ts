@@ -11,7 +11,7 @@ export interface KV {
 }
 
 interface Env {
-  RPC_URL: string; 
+  RPC_URL: string;
   NETWORK_PASSPHRASE: string;
   VAULT_ID: string;
   ASSET_CODE: string;
@@ -92,7 +92,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   const asset = new Asset(env.ASSET_CODE, env.ASSET_ISSUER);
   const token = asset.contractId(env.NETWORK_PASSPHRASE);
   const path = new URL(req.url).pathname;
-  
+
   let body: Record<string, unknown> = {};
   if (req.method === "POST") {
     const parsed: unknown = await req.json().catch(() => {
@@ -113,18 +113,18 @@ async function route(req: Request, env: Env): Promise<Response> {
     const q = new URL(req.url).searchParams.get("addr");
     const who = q ? account(q) : null;
     const [
-      state, 
-      config, 
-      paused, 
+      state,
+      config,
+      paused,
       nextId,
       xlmLong,
       xlmShort,
       btcLong,
       btcShort,
       ethLong,
-      ethShort  
+      ethShort
     ] = await Promise.all([
-      read(n, env.VAULT_ID, "state"), 
+      read(n, env.VAULT_ID, "state"),
       read(n, env.VAULT_ID, "config"),
       read(n, env.VAULT_ID, ("paused")),
       read(n, env.VAULT_ID, "next_id"),
@@ -139,12 +139,12 @@ async function route(req: Request, env: Env): Promise<Response> {
       ? { balance: await balance(n, token, who), reserved: await read(n, env.VAULT_ID, "wallet_reserved", [addr(who)]) }
       : null;
     const assetInfo = { code: env.ASSET_CODE, issuer: env.ASSET_ISSUER, contract: token };
-    return json({ 
-      state, 
-      config, 
-      wallet, 
-      asset: assetInfo, 
-      vault: env.VAULT_ID, 
+    return json({
+      state,
+      config,
+      wallet,
+      asset: assetInfo,
+      vault: env.VAULT_ID,
       network: env.NETWORK_PASSPHRASE,
       paused,
       nextId,
@@ -209,7 +209,7 @@ async function route(req: Request, env: Env): Promise<Response> {
         const value: unknown = JSON.parse(raw);
         if (typeof value !== "object" || value === null
           || !("factor" in value) || !("until" in value)
-          || typeof value.factor !== "number" 
+          || typeof value.factor !== "number"
           || !Number.isFinite(value.factor) || value.factor <= 0
           || typeof value.until !== "number" || !Number.isSafeInteger(value.until)
         ) {
@@ -295,12 +295,16 @@ async function route(req: Request, env: Env): Promise<Response> {
         )
       });
     }
+
     const call: Record<string, () => [string, xdr.ScVal[]]> = {
       deposit: () => ["deposit_capital", [addr(source), i128(body.amount)]],
       release: () => ["release", [addr(source), u64(body.id)]],
       withdraw_request: () => ["withdraw_request", [i128(body.amount)]],
       withdraw_execute: () => ["withdraw_execute", []],
+      pause: () => ["pause", [addr(source)]],
+      settle_early: () => ["settle_early", [u64(body.id)]],
     };
+
     if (!Object.hasOwn(call, action)) throw new BadRequest("unknown action");
     const [method, args] = call[action]();
     return json({ tx: await prepareInvoke(n, source, env.VAULT_ID, method, args) });
