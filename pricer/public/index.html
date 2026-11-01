@@ -85,7 +85,10 @@ code { font-size: 13px; overflow-wrap: anywhere; }
         <div class="k-lock"><dt>Queued withdrawal</dt><dd id="s-lock">–</dd></div>
         <div class="k-free"><dt>Free to back new protection</dt><dd id="s-free">–</dd></div>
       </dl>
-      <p class="muted" style="margin-top:10px">Contract <a id="vault-link" target="_blank" rel="noopener"><code id="vault-id"></code></a></p>
+      <div id="exposure"></div>
+      <p id="sales-status" role="status"></p>
+      <p class="muted" style="margin-top:10px">Vault <a id="vault-link" target="_blank" rel="noopener"><code id="vault-id"></code></a></p>
+      <p class="muted">Mock PerpDEX <a id="perpdex-link" target="_blank" rel="noopener"><code id="perpdex-id"></code></a></p>
     </section>
 
     <section aria-labelledby="start-h">
@@ -98,16 +101,74 @@ code { font-size: 13px; overflow-wrap: anywhere; }
       <p style="margin-top:12px">Your balance: <strong id="bal">–</strong> · Your active reserve: <strong id="wres">–</strong></p>
     </section>
 
+    <section class="wide" aria-labelledby="position-h">
+      <h2 id="position-h">2. Open a test position</h2>
+      <p class="muted">
+        Open a mock PerpDEX position before buying protection.
+      </p>
+
+      <form id="position-form">
+        <div class="row">
+          <div>
+            <label for="position-asset">Asset</label>
+            <select id="position-asset">
+              <option value="XLM">XLM</option>
+              <option value="BTC">BTC</option>
+              <option value="ETH">ETH</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="position-direction">Direction</label>
+            <select id="position-direction">
+              <option value="long">Long</option>
+              <option value="short">Short</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="position-notional">Position size (USD)</label>
+            <input id="position-notional"
+                  type="number"
+                  min="1"
+                  step="any"
+                  value="1000"
+                  required>
+          </div>
+        </div>
+
+        <button id="open-position" class="primary"
+                type="submit" disabled>
+          Open position
+        </button>
+      </form>
+
+      <div style="margin-top:16px">
+        <label for="close-price">Close at price (USD)</label>
+        <input id="close-price"
+              type="number"
+              min="0"
+              step="any"
+              placeholder="Optional closing price">
+      </div>
+
+      <h2 style="margin-top:16px">Your positions</h2>
+      <div id="positions">
+        <p class="muted">No positions yet.</p>
+      </div>
+    </section>
+
     <section aria-labelledby="buy-h">
       <h2 id="buy-h">2. Protect a position</h2>
       <form id="quote-form">
-        <fieldset class="row">
-          <legend class="muted" style="font-size:13px;margin-bottom:4px">Your position (XLM)</legend>
-          <div class="seg">
-            <label><input type="radio" name="direction" value="long" checked> Long</label>
-            <label><input type="radio" name="direction" value="short"> Short</label>
+        <div class="row">
+          <div>
+            <label for="protect-position">Select an open position</label>
+            <select id="protect-position" required>
+              <option value="">Open a position first</option>
+            </select>
           </div>
-        </fieldset>
+        </div>
         <div class="row">
           <div><label for="amount">Protected amount (USDC)</label><input id="amount" inputmode="decimal" value="500" required></div>
           <div><label for="duration">Duration</label>
@@ -125,25 +186,39 @@ code { font-size: 13px; overflow-wrap: anywhere; }
       <div id="quote" class="quote" hidden></div>
     </section>
 
-    <section aria-labelledby="mine-h">
-      <h2 id="mine-h">3. Your protections</h2>
-      <p class="muted">Release frees the reserved capital with no payout. Settlement and payouts arrive in the next milestone.</p>
-      <div id="mine"><p class="muted">None yet.</p></div>
+    <section class="wide" aria-labelledby="mine-h">
+      <h2 id="mine-h">4. Your protections</h2>
+      <p class="muted">
+        Monitor your protections, settlement prices,
+        and payouts after your positions close or expire.
+      </p>
+      <div id="mine">
+        <p class="muted">No protections yet.</p>
+      </div>
     </section>
 
     <section aria-labelledby="admin-h">
-      <h2 id="admin-h">Vault admin actions</h2>
-      <p class="muted">Anyone can add capital. Withdrawals are admin-only with a 7-day notice; try one to see the contract refuse you.</p>
+      <h2 id="admin-h">5. Vault owner actions</h2>
+      <p class="muted">
+        Anyone can deposit capital. Withdrawals and pausing
+        protection sales require authorization.
+        Try these actions to see the contract enforce access control.
+      </p>
       <div class="row">
-        <div><label for="dep">Deposit capital (tUSDC)</label><input id="dep" inputmode="decimal" value="100"></div>
-        <div><label for="wd">Withdraw request (tUSDC)</label><input id="wd" inputmode="decimal" value="100"></div>
-        <div><label for="rel">Release protection id</label><input id="rel" inputmode="numeric" value="0"></div>
+        <div>
+          <label for="dep">Deposit capital (tUSDC)</label>
+          <input id="dep" inputmode="decimal" value="100">
+        </div>
+        <div>
+          <label for="wd">Withdraw request (tUSDC)</label>
+          <input id="wd" inputmode="decimal" value="100">
+        </div>
       </div>
       <div class="actions">
         <button id="b-dep" disabled>Deposit</button>
         <button id="b-wd" disabled>Request withdrawal</button>
         <button id="b-wx" disabled>Execute withdrawal</button>
-        <button id="b-rel" disabled>Release</button>
+        <button id="b-pause" class="danger" disabled>Pause sales</button>
       </div>
     </section>
 
@@ -161,30 +236,75 @@ const UNIT = 1e7;
 const $ = (id) => document.getElementById(id);
 const fmt = (u) => (Number(u) / UNIT).toLocaleString(undefined, { maximumFractionDigits: 2 });
 const price = (u) => (Number(u) / UNIT).toFixed(5);
+
 const MESSAGES = {
-  InsufficientCapital: "Rejected by the contract: the pool cannot back this. Reserved capital plus this protection's max payout would exceed pool capital.",
-  WalletCapExceeded: "Rejected by the contract: this wallet would hold more than 2% of the pool in active protection.",
-  AmountOutOfRange: "Rejected by the contract: the protected amount must be between 20 and 50,000 USDC.",
-  QuoteExpired: "The quote expired after 30 seconds. Get a new one.",
+  InvalidAmount: "Enter a valid amount greater than zero.",
+  InvalidQuote: "This quote is invalid. Please request a new quote.",
+  QuoteExpired: "Your quote has expired. Please get a new one.",
   NonceUsed: "This quote has already been used.",
-  PaymentFailed: "Payment failed: not enough tUSDC in your wallet.",
-  Unauthorized: "Rejected by the contract: only the vault admin or the protection's owner can release it.",
-  AuthRequired: "Rejected: the contract requires the vault admin's signature for this action, and your wallet is not the admin.",
-  AlreadyReleased: "That protection was already released.",
-  NotFound: "No protection with that id.",
-  WithdrawalPending: "A withdrawal is already queued.",
-  NoWithdrawal: "No withdrawal is queued.",
-  WithdrawalLocked: "The withdrawal is still in its 7-day notice period.",
-  InvalidAmount: "The amount must be positive.",
-  InvalidQuote: "The quote failed validation.",
+  Unauthorized: "You do not have permission to perform this action.",
+  AmountOutOfRange: "The protection amount is outside the allowed limits.",
+  InsufficientCapital: "The pool does not have enough free capital to cover this protection.",
+  WalletCapExceeded: "This protection would exceed your wallet's coverage limit.",
+  NotFound: "The requested protection or record was not found.",
+  AlreadySettled: "This protection has already been settled.",
+  WithdrawalPending: "A withdrawal request is already pending.",
+  NoWithdrawal: "There is no pending withdrawal request.",
+  WithdrawalLocked: "The withdrawal waiting period has not ended.",
+  PaymentFailed: "Payment failed. Check your tUSDC balance and authorization.",
+  Paused: "Protection sales are currently paused.",
+  AssetDisabled: "Protection is not available for this asset.",
+  PerpdexNotAllowed: "This PerpDEX is not approved for protection.",
+  PositionMismatch: "The position details do not match the protection request.",
+  MarkMoved: "The market price moved since your quote. Please request a new quote.",
+  PositionTooNew: "This position is too new. Please wait before buying protection.",
+  AlreadyCovered: "This position already has an active protection.",
+  UtilizationCap: "This purchase would exceed the vault's utilization limit.",
+  ConcentrationCap: "This purchase would exceed the exposure limit for this asset or direction.",
+  NotExpired: "This protection has not expired yet.",
+  NotClosed: "The position is still open. Close it before settling early.",
+  OracleStale: "The oracle price is outdated. Settlement cannot proceed yet.",
+  Timelocked: "This governance action is still in its waiting period.",
+  NoChange: "There is no pending governance change.",
+  AuthRequired: "This action requires authorization from another account."
 };
+
 let me = null, data = null, current = null, timer = null;
 
-function myIds() {
-  try { return JSON.parse(localStorage.getItem("tosbi.ids") || "[]"); } catch { return []; }
+function storageKey(type) {
+  if (!data?.vault || !me) return null;
+  return `tosbi.${data.vault}.${me}.${type}`;
 }
-function saveIds(ids) {
-  try { localStorage.setItem("tosbi.ids", JSON.stringify(ids)); } catch {}
+
+function loadIds(type) {
+  const key = storageKey(type);
+  if (!key) return [];
+
+  try {
+    const ids = JSON.parse(localStorage.getItem(key) || "[]");
+    return Array.isArray(ids) ? ids : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveIds(type, ids) {
+  const key = storageKey(type);
+  if (!key) return;
+
+  try {
+    localStorage.setItem(key, JSON.stringify(ids));
+  } catch {
+    log("bad", "Could not save local data.");
+  }
+}
+
+function myIds() {
+  return loadIds("ids");
+}
+
+function myPositions() {
+  return loadIds("positions");
 }
 
 function log(kind, text, hash) {
@@ -233,8 +353,18 @@ async function action(label, body) {
   return signAndSubmit(r.tx, label);
 }
 
+
+
 async function refresh() {
   data = await api("/api/state" + (me ? `?addr=${me}` : ""));
+  const salesStatus = $("sales-status");
+  if (data.paused === true) {
+    salesStatus.textContent = "Sales paused";
+    salesStatus.className = "msg-bad";
+  } else {
+    salesStatus.textContent = "Sales active";
+    salesStatus.className = "msg-ok";
+  }
   const s = data.state, cap = Number(s.capital), res = Number(s.reserved), lock = Number(s.locked);
   const free = cap - res - lock;
   $("s-cap").textContent = fmt(cap); $("s-res").textContent = fmt(res);
