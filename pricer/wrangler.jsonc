@@ -3,28 +3,27 @@
   "name": "tosbi-demo",
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-01",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "assets": {
     "directory": "./public"
   },
-
   "vars": {
     "RPC_URL": "https://soroban-testnet.stellar.org",
     "NETWORK_PASSPHRASE": "Test SDF Network ; September 2015",
-    "VAULT_ID": "CAZXBVORB2QN7V2FHYJFALYDRLBWZGUQDW2GSF3IKGYWFMEVVMZDS4PG",
+    "VAULT_ID": "CALMXPG35NPERCSU3CAXJXKFC7MRRIRE6DJTKNJFC4ULS3S2QYKCDWGE",
     "ASSET_CODE": "tUSDC",
-    "ASSET_ISSUER": "GCYYOX6T6DSACBQRPFR57HPLCUSRHSBD5QSQ3PWUCEOQ5OVKXPGBATME",
-
-    "PERPDEX_ID": "REPLACE_WITH_DEPLOYED_PERPDEX_ID"
+    "ASSET_ISSUER": "GDOVFRRYEBASHQ5CU6WL37NJXV7TE2LREGQLN7RMEIIA2R3K7DUAZJNB",
+    "PERPDEX_ID": "CDOB3GIL3U76WUWXISDXKD3D5PRZGI5UJW2626UCTW6MJX5REAA5E3UQ"
   },
-
   "kv_namespaces": [
     {
       "binding": "KV",
-      "id": "REPLACE_WITH_KV_NAMESPACE_ID"
+      "id": "3e46da3671e84073a8a4152327eec43b",
+      "remote": true
     }
   ],
-
   "triggers": {
     "crons": [
       "* * * * *",
