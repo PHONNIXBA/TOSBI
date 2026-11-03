@@ -1,517 +1,1076 @@
 <!doctype html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TOSBI Protection Demo</title>
-<style>
-:root {
-  --bg: #f6f6f3; --panel: #ffffff; --ink: #1a1c20; --muted: #5a616d; --line: #dfe1dc;
-  --accent: #1d4ed8; --accent-ink: #ffffff; --ok: #136c3a; --bad: #a8261b; --warn: #8a5a00;
-  --reserved: #d9822b; --locked: #7c8594; --free: #2f6fde; --focus: #1d4ed8;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #101216; --panel: #191c22; --ink: #eceef2; --muted: #a2a9b4; --line: #2b2f37;
-    --accent: #7aa2ff; --accent-ink: #0b1020; --ok: #6fd69a; --bad: #ff8f85; --warn: #f2c063;
-    --reserved: #e9a05a; --locked: #8e97a6; --free: #6f9cf5; --focus: #9cbcff;
-  }
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
-header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
-h1 small { font-weight: 500; color: var(--muted); font-size: 14px; margin-left: 8px; }
-h2 { font-size: 16px; margin: 0 0 12px; }
-p { margin: 0 0 10px; }
-.muted { color: var(--muted); }
-.grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
-@media (min-width: 820px) { .grid { grid-template-columns: 1fr 1fr; } .wide { grid-column: 1 / -1; } }
-section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; min-width: 0; }
-button { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 8px 14px; cursor: pointer; }
-button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
-button.danger { border-color: var(--bad); color: var(--bad); }
-button:disabled { opacity: .5; cursor: not-allowed; }
-:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
-input, select { font: inherit; width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
-.row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); margin-bottom: 12px; }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; }
-fieldset { border: 0; padding: 0; margin: 0; }
-.seg { display: flex; gap: 6px; }
-.seg label { display: flex; align-items: center; gap: 6px; color: var(--ink); font-size: 15px; border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; margin: 0; cursor: pointer; }
-.seg input { width: auto; }
-.bar { display: flex; height: 18px; border-radius: 6px; overflow: hidden; background: var(--free); margin: 8px 0 12px; }
-.bar span { display: block; height: 100%; }
-dl.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 0; }
-dl.stats div { border-left: 4px solid var(--line); padding-left: 10px; }
-dt { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-dd { margin: 0; font-size: 18px; font-variant-numeric: tabular-nums; font-weight: 600; }
-.k-cap { border-color: var(--ink) !important; } .k-res { border-color: var(--reserved) !important; } .k-lock { border-color: var(--locked) !important; } .k-free { border-color: var(--free) !important; }
-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
-th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); font-size: 14px; }
-th { color: var(--muted); font-weight: 500; }
-.quote { border: 1px dashed var(--line); border-radius: 10px; padding: 12px; margin-top: 12px; }
-.total { font-size: 20px; font-weight: 700; }
-.msg-ok { color: var(--ok); } .msg-bad { color: var(--bad); } .msg-warn { color: var(--warn); }
-.badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
-#log { list-style: none; padding: 0; margin: 0; max-height: 320px; overflow: auto; }
-#log li { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; overflow-wrap: anywhere; }
-a { color: var(--accent); }
-code { font-size: 13px; overflow-wrap: anywhere; }
-@media (prefers-reduced-motion: no-preference) { button { transition: filter .15s; } button:hover:not(:disabled) { filter: brightness(1.05); } }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TOSBI Protection Demo</title>
+  <style>
+    :root {
+      --bg: #f6f6f3;
+      --panel: #ffffff;
+      --ink: #1a1c20;
+      --muted: #5a616d;
+      --line: #dfe1dc;
+      --accent: #1d4ed8;
+      --accent-ink: #ffffff;
+      --ok: #136c3a;
+      --bad: #a8261b;
+      --warn: #8a5a00;
+      --reserved: #d9822b;
+      --locked: #7c8594;
+      --free: #2f6fde;
+      --focus: #1d4ed8;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #101216;
+        --panel: #191c22;
+        --ink: #eceef2;
+        --muted: #a2a9b4;
+        --line: #2b2f37;
+        --accent: #7aa2ff;
+        --accent-ink: #0b1020;
+        --ok: #6fd69a;
+        --bad: #ff8f85;
+        --warn: #f2c063;
+        --reserved: #e9a05a;
+        --locked: #8e97a6;
+        --free: #6f9cf5;
+        --focus: #9cbcff;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 24px 16px 64px;
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin: 0;
+      letter-spacing: -0.01em;
+    }
+
+    h1 small {
+      font-weight: 500;
+      color: var(--muted);
+      font-size: 14px;
+      margin-left: 8px;
+    }
+
+    h2 {
+      font-size: 16px;
+      margin: 0 0 12px;
+    }
+
+    p {
+      margin: 0 0 10px;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 820px) {
+      .grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .wide {
+        grid-column: 1 / -1;
+      }
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px;
+      min-width: 0;
+    }
+
+    button {
+      font: inherit;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      padding: 8px 14px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-ink);
+      font-weight: 600;
+    }
+
+    button.danger {
+      border-color: var(--bad);
+      color: var(--bad);
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    :focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    input,
+    select {
+      font: inherit;
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--ink);
+    }
+
+    .row {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      margin-bottom: 12px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    fieldset {
+      border: 0;
+      padding: 0;
+      margin: 0;
+    }
+
+    .seg {
+      display: flex;
+      gap: 6px;
+    }
+
+    .seg label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--ink);
+      font-size: 15px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 12px;
+      margin: 0;
+      cursor: pointer;
+    }
+
+    .seg input {
+      width: auto;
+    }
+
+    .bar {
+      display: flex;
+      height: 18px;
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--free);
+      margin: 8px 0 12px;
+    }
+
+    .bar span {
+      display: block;
+      height: 100%;
+    }
+
+    dl.stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+      margin: 0;
+    }
+
+    dl.stats div {
+      border-left: 4px solid var(--line);
+      padding-left: 10px;
+    }
+
+    dt {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    dd {
+      margin: 0;
+      font-size: 18px;
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+    }
+
+    .k-cap {
+      border-color: var(--ink) !important;
+    }
+
+    .k-res {
+      border-color: var(--reserved) !important;
+    }
+
+    .k-lock {
+      border-color: var(--locked) !important;
+    }
+
+    .k-free {
+      border-color: var(--free) !important;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 6px 4px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .quote {
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      margin-top: 12px;
+    }
+
+    .total {
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .msg-ok {
+      color: var(--ok);
+    }
+
+    .msg-bad {
+      color: var(--bad);
+    }
+
+    .msg-warn {
+      color: var(--warn);
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid currentColor;
+    }
+
+    #log {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      max-height: 320px;
+      overflow: auto;
+    }
+
+    #log li {
+      padding: 6px 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+
+    a {
+      color: var(--accent);
+    }
+
+    code {
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    @media (prefers-reduced-motion: no-preference) {
+      button {
+        transition: filter .15s;
+      }
+
+      button:hover:not(:disabled) {
+        filter: brightness(1.05);
+      }
+    }
+  </style>
 </head>
+
 <body>
-<main>
-  <header>
-    <h1>TOSBI Protection <small>Stellar testnet demo</small></h1>
-    <div class="actions">
-      <span id="who" class="muted">Wallet not connected</span>
-      <button id="connect" class="primary">Connect Freighter</button>
-    </div>
-  </header>
-  <p id="banner" class="msg-warn" role="status"></p>
-
-  <div class="grid">
-    <section class="wide" aria-labelledby="vault-h">
-      <h2 id="vault-h">Protection Capital vault</h2>
-      <p class="muted">Every protection reserves its maximum payout. The contract refuses any sale that would make reservations exceed pool capital.</p>
-      <div class="bar" role="img" id="bar" aria-label="Vault usage"></div>
-      <dl class="stats">
-        <div class="k-cap"><dt>Pool capital</dt><dd id="s-cap">–</dd></div>
-        <div class="k-res"><dt>Reserved</dt><dd id="s-res">–</dd></div>
-        <div class="k-lock"><dt>Queued withdrawal</dt><dd id="s-lock">–</dd></div>
-        <div class="k-free"><dt>Free to back new protection</dt><dd id="s-free">–</dd></div>
-      </dl>
-      <div id="exposure"></div>
-      <p id="sales-status" role="status"></p>
-      <p class="muted" style="margin-top:10px">Vault <a id="vault-link" target="_blank" rel="noopener"><code id="vault-id"></code></a></p>
-      <p class="muted">Mock PerpDEX <a id="perpdex-link" target="_blank" rel="noopener"><code id="perpdex-id"></code></a></p>
-    </section>
-
-    <section aria-labelledby="start-h">
-      <h2 id="start-h">1. Get test funds</h2>
-      <p class="muted">You need testnet XLM for fees and test USDC (<span class="asset-code">tUSDC</span>) to pay for protection.</p>
+  <main>
+    <header>
+      <h1>TOSBI Protection <small>Stellar testnet demo</small></h1>
       <div class="actions">
-        <button id="fund-xlm" disabled>Get testnet XLM</button>
-        <button id="fund-usdc" disabled>Get 1,000 <span class="asset-code">tUSDC</span></button>
+        <span id="who" class="muted">Wallet not connected</span>
+        <button id="connect" class="primary">Connect Freighter</button>
       </div>
-      <p style="margin-top:12px">Your balance: <strong id="bal">–</strong> · Your active reserve: <strong id="wres">–</strong></p>
-    </section>
+    </header>
+    <p id="banner" class="msg-warn" role="status"></p>
 
-    <section class="wide" aria-labelledby="position-h">
-      <h2 id="position-h">2. Open a test position</h2>
-      <p class="muted">
-        Open a mock PerpDEX position before buying protection.
-      </p>
+    <div class="grid">
+      <section class="wide" aria-labelledby="vault-h">
+        <h2 id="vault-h">Protection Capital vault</h2>
+        <p class="muted">Every protection reserves its maximum payout. The contract refuses any sale that would make
+          reservations exceed pool capital.</p>
+        <div class="bar" role="img" id="bar" aria-label="Vault usage"></div>
+        <dl class="stats">
+          <div class="k-cap">
+            <dt>Pool capital</dt>
+            <dd id="s-cap">–</dd>
+          </div>
+          <div class="k-res">
+            <dt>Reserved</dt>
+            <dd id="s-res">–</dd>
+          </div>
+          <div class="k-lock">
+            <dt>Queued withdrawal</dt>
+            <dd id="s-lock">–</dd>
+          </div>
+          <div class="k-free">
+            <dt>Free to back new protection</dt>
+            <dd id="s-free">–</dd>
+          </div>
+        </dl>
+        <div id="exposure"></div>
+        <p id="sales-status" role="status"></p>
+        <p class="muted" style="margin-top:10px">Vault <a id="vault-link" target="_blank" rel="noopener"><code
+              id="vault-id"></code></a></p>
+        <p class="muted">Mock PerpDEX <a id="perpdex-link" target="_blank" rel="noopener"><code
+              id="perpdex-id"></code></a></p>
+      </section>
 
-      <form id="position-form">
-        <div class="row">
-          <div>
-            <label for="position-asset">Asset</label>
-            <select id="position-asset">
-              <option value="XLM">XLM</option>
-              <option value="BTC">BTC</option>
-              <option value="ETH">ETH</option>
-            </select>
+      <section aria-labelledby="start-h">
+        <h2 id="start-h">1. Get test funds</h2>
+        <p class="muted">You need testnet XLM for fees and test USDC (<span class="asset-code">tUSDC</span>) to pay for
+          protection.</p>
+        <div class="actions">
+          <button id="fund-xlm" disabled>Get testnet XLM</button>
+          <button id="fund-usdc" disabled>Get 1,000 <span class="asset-code">tUSDC</span></button>
+        </div>
+        <p style="margin-top:12px">Your balance: <strong id="bal">–</strong> · Your active reserve: <strong
+            id="wres">–</strong></p>
+      </section>
+
+      <section class="wide" aria-labelledby="position-h">
+        <h2 id="position-h">2. Open a test position</h2>
+        <p class="muted">
+          Open a mock PerpDEX position before buying protection.
+        </p>
+
+        <form id="position-form">
+          <div class="row">
+            <div>
+              <label for="position-asset">Asset</label>
+              <select id="position-asset">
+                <option value="XLM">XLM</option>
+                <option value="BTC">BTC</option>
+                <option value="ETH">ETH</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="position-direction">Direction</label>
+              <select id="position-direction">
+                <option value="long">Long</option>
+                <option value="short">Short</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="position-notional">Position size (USD)</label>
+              <input id="position-notional" type="number" min="1" step="any" value="1000" required>
+            </div>
           </div>
 
-          <div>
-            <label for="position-direction">Direction</label>
-            <select id="position-direction">
-              <option value="long">Long</option>
-              <option value="short">Short</option>
-            </select>
-          </div>
+          <button id="open-position" class="primary" type="submit" disabled>
+            Open position
+          </button>
+        </form>
 
-          <div>
-            <label for="position-notional">Position size (USD)</label>
-            <input id="position-notional"
-                  type="number"
-                  min="1"
-                  step="any"
-                  value="1000"
-                  required>
-          </div>
+        <div style="margin-top:16px">
+          <label for="close-price">Close at price (USD)</label>
+          <input id="close-price" type="number" min="0" step="any" placeholder="Optional closing price">
         </div>
 
-        <button id="open-position" class="primary"
-                type="submit" disabled>
-          Open position
-        </button>
-      </form>
+        <h2 style="margin-top:16px">Your positions</h2>
+        <div id="positions">
+          <p class="muted">No positions yet.</p>
+        </div>
+      </section>
 
-      <div style="margin-top:16px">
-        <label for="close-price">Close at price (USD)</label>
-        <input id="close-price"
-              type="number"
-              min="0"
-              step="any"
-              placeholder="Optional closing price">
-      </div>
+      <section aria-labelledby="buy-h">
+        <h2 id="buy-h">2. Protect a position</h2>
+        <form id="quote-form">
+          <div class="row">
+            <div>
+              <label for="protect-position">Select an open position</label>
+              <select id="protect-position" required>
+                <option value="">Open a position first</option>
+              </select>
+            </div>
+          </div>
+          <div class="row">
+            <div><label for="amount">Protected amount (USDC)</label><input id="amount" inputmode="decimal" value="500"
+                required></div>
+            <div><label for="duration">Duration</label>
+              <select id="duration">
+                <option value="900">15 minutes</option>
+                <option value="3600">1 hour</option>
+                <option value="14400">4 hours</option>
+                <option value="43200">12 hours</option>
+                <option value="86400" selected>1 day</option>
+                <option value="259200">3 days</option>
+                <option value="604800">7 days</option>
+              </select>
+            </div>
+            <div><label for="range">Coverage range (%)</label><input id="range" type="number" min="5" max="50" step="1"
+                value="25" required></div>
+          </div>
+          <div class="actions">
+            <button id="get-quote" class="primary" type="submit" disabled>Get quote</button>
+            <button id="exceed" type="button" class="danger" disabled>Try to exceed the pool</button>
+          </div>
+        </form>
+        <div id="quote" class="quote" hidden></div>
+      </section>
 
-      <h2 style="margin-top:16px">Your positions</h2>
-      <div id="positions">
-        <p class="muted">No positions yet.</p>
-      </div>
-    </section>
+      <section class="wide" aria-labelledby="mine-h">
+        <h2 id="mine-h">4. Your protections</h2>
+        <p class="muted">
+          Monitor your protections, settlement prices,
+          and payouts after your positions close or expire.
+        </p>
+        <div id="mine">
+          <p class="muted">No protections yet.</p>
+        </div>
+      </section>
 
-    <section aria-labelledby="buy-h">
-      <h2 id="buy-h">2. Protect a position</h2>
-      <form id="quote-form">
+      <section aria-labelledby="admin-h">
+        <h2 id="admin-h">5. Vault owner actions</h2>
+        <p class="muted">
+          Anyone can deposit capital. Withdrawals and pausing
+          protection sales require authorization.
+          Try these actions to see the contract enforce access control.
+        </p>
         <div class="row">
           <div>
-            <label for="protect-position">Select an open position</label>
-            <select id="protect-position" required>
-              <option value="">Open a position first</option>
-            </select>
+            <label for="dep">Deposit capital (tUSDC)</label>
+            <input id="dep" inputmode="decimal" value="100">
           </div>
-        </div>
-        <div class="row">
-          <div><label for="amount">Protected amount (USDC)</label><input id="amount" inputmode="decimal" value="500" required></div>
-          <div><label for="duration">Duration</label>
-            <select id="duration">
-              <option value="900">15 minutes</option><option value="3600">1 hour</option><option value="14400">4 hours</option>
-              <option value="43200">12 hours</option><option value="86400" selected>1 day</option><option value="259200">3 days</option><option value="604800">7 days</option>
-            </select></div>
-          <div><label for="range">Coverage range (%)</label><input id="range" type="number" min="5" max="50" step="1" value="25" required></div>
+          <div>
+            <label for="wd">Withdraw request (tUSDC)</label>
+            <input id="wd" inputmode="decimal" value="100">
+          </div>
         </div>
         <div class="actions">
-          <button id="get-quote" class="primary" type="submit" disabled>Get quote</button>
-          <button id="exceed" type="button" class="danger" disabled>Try to exceed the pool</button>
+          <button id="b-dep" disabled>Deposit</button>
+          <button id="b-wd" disabled>Request withdrawal</button>
+          <button id="b-wx" disabled>Execute withdrawal</button>
+          <button id="b-pause" class="danger" disabled>Pause sales</button>
         </div>
-      </form>
-      <div id="quote" class="quote" hidden></div>
-    </section>
+      </section>
 
-    <section class="wide" aria-labelledby="mine-h">
-      <h2 id="mine-h">4. Your protections</h2>
-      <p class="muted">
-        Monitor your protections, settlement prices,
-        and payouts after your positions close or expire.
-      </p>
-      <div id="mine">
-        <p class="muted">No protections yet.</p>
-      </div>
-    </section>
+      <section class="wide" aria-labelledby="log-h">
+        <h2 id="log-h">Activity</h2>
+        <ul id="log" aria-live="polite"></ul>
+      </section>
+    </div>
+  </main>
 
-    <section aria-labelledby="admin-h">
-      <h2 id="admin-h">5. Vault owner actions</h2>
-      <p class="muted">
-        Anyone can deposit capital. Withdrawals and pausing
-        protection sales require authorization.
-        Try these actions to see the contract enforce access control.
-      </p>
-      <div class="row">
-        <div>
-          <label for="dep">Deposit capital (tUSDC)</label>
-          <input id="dep" inputmode="decimal" value="100">
-        </div>
-        <div>
-          <label for="wd">Withdraw request (tUSDC)</label>
-          <input id="wd" inputmode="decimal" value="100">
-        </div>
-      </div>
-      <div class="actions">
-        <button id="b-dep" disabled>Deposit</button>
-        <button id="b-wd" disabled>Request withdrawal</button>
-        <button id="b-wx" disabled>Execute withdrawal</button>
-        <button id="b-pause" class="danger" disabled>Pause sales</button>
-      </div>
-    </section>
+  <script src="https://cdn.jsdelivr.net/npm/@stellar/freighter-api@6.0.1/build/index.min.js"></script>
+  <script>
+    const F = window.freighterApi;
+    const UNIT = 1e7;
+    const $ = (id) => document.getElementById(id);
+    const fmt = (u) => (Number(u) / UNIT).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    const price = (u) => (Number(u) / UNIT).toFixed(5);
 
-    <section class="wide" aria-labelledby="log-h">
-      <h2 id="log-h">Activity</h2>
-      <ul id="log" aria-live="polite"></ul>
-    </section>
-  </div>
-</main>
+    const MESSAGES = {
+      InvalidAmount: "Enter a valid amount greater than zero.",
+      InvalidQuote: "This quote is invalid. Please request a new quote.",
+      QuoteExpired: "Your quote has expired. Please get a new one.",
+      NonceUsed: "This quote has already been used.",
+      Unauthorized: "You do not have permission to perform this action.",
+      AmountOutOfRange: "The protection amount is outside the allowed limits.",
+      InsufficientCapital: "The pool does not have enough free capital to cover this protection.",
+      WalletCapExceeded: "This protection would exceed your wallet's coverage limit.",
+      NotFound: "The requested protection or record was not found.",
+      AlreadySettled: "This protection has already been settled.",
+      WithdrawalPending: "A withdrawal request is already pending.",
+      NoWithdrawal: "There is no pending withdrawal request.",
+      WithdrawalLocked: "The withdrawal waiting period has not ended.",
+      PaymentFailed: "Payment failed. Check your tUSDC balance and authorization.",
+      Paused: "Protection sales are currently paused.",
+      AssetDisabled: "Protection is not available for this asset.",
+      PerpdexNotAllowed: "This PerpDEX is not approved for protection.",
+      PositionMismatch: "The position details do not match the protection request.",
+      MarkMoved: "The market price moved since your quote. Please request a new quote.",
+      PositionTooNew: "This position is too new. Please wait before buying protection.",
+      AlreadyCovered: "This position already has an active protection.",
+      UtilizationCap: "This purchase would exceed the vault's utilization limit.",
+      ConcentrationCap: "This purchase would exceed the exposure limit for this asset or direction.",
+      NotExpired: "This protection has not expired yet.",
+      NotClosed: "The position is still open. Close it before settling early.",
+      OracleStale: "The oracle price is outdated. Settlement cannot proceed yet.",
+      Timelocked: "This governance action is still in its waiting period.",
+      NoChange: "There is no pending governance change.",
+      AuthRequired: "This action requires authorization from another account."
+    };
 
-<script src="https://cdn.jsdelivr.net/npm/@stellar/freighter-api@6.0.1/build/index.min.js"></script>
-<script>
-const F = window.freighterApi;
-const UNIT = 1e7;
-const $ = (id) => document.getElementById(id);
-const fmt = (u) => (Number(u) / UNIT).toLocaleString(undefined, { maximumFractionDigits: 2 });
-const price = (u) => (Number(u) / UNIT).toFixed(5);
+    let me = null, data = null, current = null, timer = null;
 
-const MESSAGES = {
-  InvalidAmount: "Enter a valid amount greater than zero.",
-  InvalidQuote: "This quote is invalid. Please request a new quote.",
-  QuoteExpired: "Your quote has expired. Please get a new one.",
-  NonceUsed: "This quote has already been used.",
-  Unauthorized: "You do not have permission to perform this action.",
-  AmountOutOfRange: "The protection amount is outside the allowed limits.",
-  InsufficientCapital: "The pool does not have enough free capital to cover this protection.",
-  WalletCapExceeded: "This protection would exceed your wallet's coverage limit.",
-  NotFound: "The requested protection or record was not found.",
-  AlreadySettled: "This protection has already been settled.",
-  WithdrawalPending: "A withdrawal request is already pending.",
-  NoWithdrawal: "There is no pending withdrawal request.",
-  WithdrawalLocked: "The withdrawal waiting period has not ended.",
-  PaymentFailed: "Payment failed. Check your tUSDC balance and authorization.",
-  Paused: "Protection sales are currently paused.",
-  AssetDisabled: "Protection is not available for this asset.",
-  PerpdexNotAllowed: "This PerpDEX is not approved for protection.",
-  PositionMismatch: "The position details do not match the protection request.",
-  MarkMoved: "The market price moved since your quote. Please request a new quote.",
-  PositionTooNew: "This position is too new. Please wait before buying protection.",
-  AlreadyCovered: "This position already has an active protection.",
-  UtilizationCap: "This purchase would exceed the vault's utilization limit.",
-  ConcentrationCap: "This purchase would exceed the exposure limit for this asset or direction.",
-  NotExpired: "This protection has not expired yet.",
-  NotClosed: "The position is still open. Close it before settling early.",
-  OracleStale: "The oracle price is outdated. Settlement cannot proceed yet.",
-  Timelocked: "This governance action is still in its waiting period.",
-  NoChange: "There is no pending governance change.",
-  AuthRequired: "This action requires authorization from another account."
-};
-
-let me = null, data = null, current = null, timer = null;
-
-function storageKey(type) {
-  if (!data?.vault || !me) return null;
-  return `tosbi.${data.vault}.${me}.${type}`;
-}
-
-function loadIds(type) {
-  const key = storageKey(type);
-  if (!key) return [];
-
-  try {
-    const ids = JSON.parse(localStorage.getItem(key) || "[]");
-    return Array.isArray(ids) ? ids : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveIds(type, ids) {
-  const key = storageKey(type);
-  if (!key) return;
-
-  try {
-    localStorage.setItem(key, JSON.stringify(ids));
-  } catch {
-    log("bad", "Could not save local data.");
-  }
-}
-
-function myIds() {
-  return loadIds("ids");
-}
-
-function myPositions() {
-  return loadIds("positions");
-}
-
-function log(kind, text, hash) {
-  const li = document.createElement("li");
-  li.className = kind === "ok" ? "msg-ok" : kind === "bad" ? "msg-bad" : "";
-  li.textContent = `${new Date().toLocaleTimeString()} · ${text} `;
-  if (hash) {
-    const a = document.createElement("a");
-    a.href = `https://stellar.expert/explorer/testnet/tx/${hash}`;
-    a.target = "_blank"; a.rel = "noopener";
-    a.textContent = `tx ${hash.slice(0, 10)}…`;
-    li.append(a);
-  }
-  $("log").prepend(li);
-}
-
-async function api(path, body) {
-  const res = await fetch(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : undefined);
-  const j = await res.json().catch(() => ({ error: res.statusText }));
-  if (!res.ok) throw new Error(j.error || res.statusText);
-  return j;
-}
-
-const explain = (r) => MESSAGES[r.name] || `Rejected: ${r.name}`;
-
-async function busy(btn, fn) {
-  btn.disabled = true; btn.setAttribute("aria-busy", "true");
-  try { await fn(); } catch (e) { log("bad", e.message || String(e)); }
-  finally { btn.removeAttribute("aria-busy"); btn.disabled = btn.dataset.expired === "1"; }
-}
-
-async function signAndSubmit(xdr, label) {
-  const signed = await F.signTransaction(xdr, { networkPassphrase: data.network, address: me });
-  if (signed.error) throw new Error(`Freighter: ${signed.error.message || signed.error}`);
-  log("", `${label}: submitted, waiting for the ledger…`);
-  const r = await api("/api/submit", { xdr: signed.signedTxXdr });
-  if (r.status !== "SUCCESS") { log("bad", `${label} failed on-chain (${r.status})`, r.hash); return null; }
-  log("ok", `${label} confirmed`, r.hash);
-  await refresh();
-  return r;
-}
-
-async function action(label, body) {
-  const r = await api("/api/tx", { source: me, ...body });
-  if (r.rejected) { log("bad", `${label}: ${explain(r.rejected)}`); return null; }
-  return signAndSubmit(r.tx, label);
-}
-
-
-
-async function refresh() {
-  data = await api("/api/state" + (me ? `?addr=${me}` : ""));
-  const salesStatus = $("sales-status");
-  if (data.paused === true) {
-    salesStatus.textContent = "Sales paused";
-    salesStatus.className = "msg-bad";
-  } else {
-    salesStatus.textContent = "Sales active";
-    salesStatus.className = "msg-ok";
-  }
-  const s = data.state, cap = Number(s.capital), res = Number(s.reserved), lock = Number(s.locked);
-  const free = cap - res - lock;
-  $("s-cap").textContent = fmt(cap); $("s-res").textContent = fmt(res);
-  $("s-lock").textContent = lock ? `${fmt(lock)} (unlocks ${new Date(Number(s.unlock_at) * 1000).toLocaleString()})` : "0";
-  $("s-free").textContent = fmt(free);
-  const bar = $("bar"); bar.replaceChildren();
-  for (const [v, color] of [[res, "var(--reserved)"], [lock, "var(--locked)"]]) {
-    const span = document.createElement("span");
-    span.style.width = cap ? `${(100 * v) / cap}%` : "0"; span.style.background = color; bar.append(span);
-  }
-  bar.setAttribute("aria-label", `Reserved ${fmt(res)}, queued ${fmt(lock)}, free ${fmt(free)} of ${fmt(cap)} pool capital`);
-  $("vault-id").textContent = data.vault;
-  $("vault-link").href = `https://stellar.expert/explorer/testnet/contract/${data.vault}`;
-  document.querySelectorAll(".asset-code").forEach((e) => (e.textContent = data.asset.code));
-  if (data.wallet) {
-    $("bal").textContent = data.wallet.balance === null ? "no trustline yet" : `${fmt(data.wallet.balance)} ${data.asset.code}`;
-    $("wres").textContent = fmt(data.wallet.reserved);
-  }
-  await renderMine();
-}
-
-async function renderMine() {
-  const ids = myIds();
-  if (!ids.length) return;
-  const table = document.createElement("table");
-  table.innerHTML = "<thead><tr><th scope='col'>Id</th><th scope='col'>Side</th><th scope='col'>Max payout</th><th scope='col'>Expires</th><th scope='col'>Status</th><th scope='col'><span class='muted'>Action</span></th></tr></thead>";
-  const body = document.createElement("tbody");
-  for (const id of ids) {
-    const p = await api(`/api/protection?id=${encodeURIComponent(id)}`).catch(() => null);
-    if (!p) continue;
-    const tr = document.createElement("tr");
-    const status = Number(p.status) === 1 ? "Released" : Date.now() / 1000 < Number(p.t_active) ? "Pending (5 min delay)" : "Active";
-    for (const v of [id, Number(p.direction) === 0 ? "Long" : "Short", fmt(p.max_payout), new Date(Number(p.t_expire) * 1000).toLocaleString(), status]) {
-      const td = document.createElement("td"); td.textContent = v; tr.append(td);
+    function storageKey(type) {
+      if (!data?.vault || !me) return null;
+      return `tosbi.${data.vault}.${me}.${type}`;
     }
-    const td = document.createElement("td");
-    if (Number(p.status) !== 1) {
-      const b = document.createElement("button"); b.textContent = "Release";
-      b.setAttribute("aria-label", `Release protection ${id}`);
-      b.onclick = () => busy(b, () => action(`Release #${id}`, { action: "release", id: String(id) }));
-      td.append(b);
+
+    function loadIds(type) {
+      const key = storageKey(type);
+      if (!key) return [];
+
+      try {
+        const ids = JSON.parse(localStorage.getItem(key) || "[]");
+        return Array.isArray(ids) ? ids : [];
+      } catch {
+        return [];
+      }
     }
-    tr.append(td); body.append(tr);
-  }
-  table.append(body);
-  $("mine").replaceChildren(table);
-}
 
-function renderQuote(q) {
-  const box = $("quote"); box.hidden = false; box.replaceChildren();
-  const add = (tag, text, cls) => { const e = document.createElement(tag); e.textContent = text; if (cls) e.className = cls; box.append(e); return e; };
-  if (q.rejected) {
-    add("p", explain(q.rejected), "msg-bad");
-    if (q.quote) add("p", `Max payout asked: ${fmt(q.quote.max_payout)} · free capital: ${fmt(Number(data.state.capital) - Number(data.state.reserved) - Number(data.state.locked))}`, "muted");
-    return;
-  }
-  const t = q.quote, b = q.breakdown, long = t.direction === "long";
-  const rows = [
-    ["Protection start", `$${price(t.p_start)}`],
-    [long ? "Covers a fall down to" : "Covers a rise up to", `$${price(t.p_end)}`],
-    ["Maximum payout (reserved)", `${fmt(t.max_payout)} USDC`],
-    ["Volatility used", `${(t.vol_bps / 100).toFixed(1)}% (${long ? "downside" : "upside"})`],
-    ["Fair price", `${b.fair.toFixed(2)} USDC`],
-    ["Loadings", `utilization ×${b.mU.toFixed(3)}, margin ×1.05`],
-    ["Premium → pool", `${fmt(t.premium)} USDC`],
-    ["Protection fee → TOSBI", `${fmt(t.fee)} USDC`],
-  ];
-  const table = document.createElement("table"); const body = document.createElement("tbody");
-  for (const [k, v] of rows) {
-    const tr = document.createElement("tr"); const th = document.createElement("th"); th.scope = "row"; th.textContent = k;
-    const td = document.createElement("td"); td.textContent = v; tr.append(th, td); body.append(tr);
-  }
-  table.append(body); box.append(table);
-  add("p", `Total cost: ${fmt(BigInt(t.premium) + BigInt(t.fee))} USDC`, "total");
-  const status = add("p", "", "muted"); status.setAttribute("role", "status");
-  const buy = document.createElement("button"); buy.className = "primary"; buy.textContent = "Buy protection";
-  box.append(buy);
-  clearInterval(timer);
-  const tick = () => {
-    const left = Number(t.expires_at) - Math.floor(Date.now() / 1000);
-    status.textContent = left > 0 ? `Quote valid for ${left}s` : "Quote expired. Get a new quote.";
-    if (left <= 0) { buy.disabled = true; buy.dataset.expired = "1"; clearInterval(timer); }
-  };
-  tick(); timer = setInterval(tick, 1000);
-  buy.onclick = () => busy(buy, async () => {
-    const r = await signAndSubmit(q.tx, "Buy protection");
-    if (!r) return;
-    clearInterval(timer);
-    $("quote").hidden = true;
-    const ids = myIds(); ids.push(String(r.result)); saveIds(ids);
-    log("ok", `Protection #${r.result} is live`);
-    await renderMine();
-  });
-}
+    function saveIds(type, ids) {
+      const key = storageKey(type);
+      if (!key) return;
 
-async function quote(body) {
-  const q = await api("/api/quote", { trader: me, ...body });
-  if (q.rejected) log("bad", explain(q.rejected));
-  renderQuote(q);
-}
+      try {
+        localStorage.setItem(key, JSON.stringify(ids));
+      } catch {
+        log("bad", "Could not save local data.");
+      }
+    }
 
-async function connect() {
-  if (!data) await refresh();
-  if (!F || !(await F.isConnected()).isConnected) {
-    $("banner").textContent = "Freighter is not installed. Install it from freighter.app, switch it to Testnet, then reload.";
-    return;
-  }
-  const acc = await F.requestAccess();
-  if (acc.error) throw new Error(acc.error.message || acc.error);
-  const net = await F.getNetworkDetails();
-  if (net.networkPassphrase !== data.network) { $("banner").textContent = "Switch Freighter to Testnet, then connect again."; return; }
-  me = acc.address; $("banner").textContent = "";
-  $("who").textContent = `${me.slice(0, 6)}…${me.slice(-6)}`;
-  $("connect").textContent = "Connected";
-  document.querySelectorAll("button").forEach((b) => (b.disabled = false));
-  await refresh();
-}
+    function myIds() {
+      return loadIds("ids");
+    }
 
-$("connect").onclick = () => busy($("connect"), connect);
-$("fund-xlm").onclick = () => busy($("fund-xlm"), async () => {
-  const r = await fetch(`https://friendbot.stellar.org/?addr=${me}`);
-  if (!r.ok) throw new Error("Friendbot refused (already funded?)");
-  log("ok", "Funded with testnet XLM"); await refresh();
-});
-$("fund-usdc").onclick = () => busy($("fund-usdc"), async () => {
-  if (data.wallet.balance === null && !(await action(`Add ${data.asset.code} trustline`, { action: "trust" }))) return;
-  const r = await api("/api/faucet", { addr: me });
-  log(r.status === "SUCCESS" ? "ok" : "bad", `Faucet sent 1,000 ${data.asset.code}`, r.hash);
-  await refresh();
-});
-$("quote-form").onsubmit = (e) => {
-  e.preventDefault();
-  busy($("get-quote"), () => quote({
-    direction: document.querySelector("input[name=direction]:checked").value,
-    amount: $("amount").value.trim(),
-    duration: Number($("duration").value),
-    rangeBps: Math.round(Number($("range").value) * 100),
-  }));
-};
-$("exceed").onclick = () => busy($("exceed"), () => quote({ direction: "long", amount: "50000", duration: 86400, rangeBps: 5000 }));
-$("b-dep").onclick = () => busy($("b-dep"), () => action("Deposit capital", { action: "deposit", amount: $("dep").value.trim() }));
-$("b-wd").onclick = () => busy($("b-wd"), () => action("Withdrawal request", { action: "withdraw_request", amount: $("wd").value.trim() }));
-$("b-wx").onclick = () => busy($("b-wx"), () => action("Execute withdrawal", { action: "withdraw_execute" }));
-$("b-rel").onclick = () => busy($("b-rel"), () => action(`Release #${$("rel").value}`, { action: "release", id: $("rel").value.trim() }));
+    function myPositions() {
+      return loadIds("positions");
+    }
 
-refresh().catch((e) => log("bad", `Could not load vault state: ${e.message}`));
-setInterval(() => refresh().catch(() => {}), 15000);
-</script>
+    function log(kind, text, hash) {
+      const li = document.createElement("li");
+      li.className = kind === "ok" ? "msg-ok" : kind === "bad" ? "msg-bad" : "";
+      li.textContent = `${new Date().toLocaleTimeString()} · ${text} `;
+      if (hash) {
+        const a = document.createElement("a");
+        a.href = `https://stellar.expert/explorer/testnet/tx/${hash}`;
+        a.target = "_blank"; a.rel = "noopener";
+        a.textContent = `tx ${hash.slice(0, 10)}…`;
+        li.append(a);
+      }
+      $("log").prepend(li);
+    }
+
+    async function api(path, body) {
+      const res = await fetch(path, body ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : undefined);
+      const j = await res.json().catch(() => ({ error: res.statusText }));
+      if (!res.ok) throw new Error(j.error || res.statusText);
+      return j;
+    }
+
+    const explain = (r) => MESSAGES[r.name] || `Rejected: ${r.name}`;
+
+    async function busy(btn, fn) {
+      btn.disabled = true; btn.setAttribute("aria-busy", "true");
+      try { await fn(); } catch (e) { log("bad", e.message || String(e)); }
+      finally { btn.removeAttribute("aria-busy"); btn.disabled = btn.dataset.expired === "1"; }
+    }
+
+    async function signAndSubmit(xdr, label) {
+      const signed = await F.signTransaction(xdr, { networkPassphrase: data.network, address: me });
+      if (signed.error) throw new Error(`Freighter: ${signed.error.message || signed.error}`);
+      log("", `${label}: submitted, waiting for the ledger…`);
+      const r = await api("/api/submit", { xdr: signed.signedTxXdr });
+      if (r.status !== "SUCCESS") { log("bad", `${label} failed on-chain (${r.status})`, r.hash); return null; }
+      log("ok", `${label} confirmed`, r.hash);
+      await refresh();
+      return r;
+    }
+
+    async function action(label, body) {
+      const r = await api("/api/tx", { source: me, ...body });
+      if (r.rejected) { log("bad", `${label}: ${explain(r.rejected)}`); return null; }
+      return signAndSubmit(r.tx, label);
+    }
+
+
+
+    async function refresh() {
+      data = await api("/api/state" + (me ? `?addr=${me}` : ""));
+      const salesStatus = $("sales-status");
+      if (data.paused === true) {
+        salesStatus.textContent = "Sales paused";
+        salesStatus.className = "msg-bad";
+      } else {
+        salesStatus.textContent = "Sales active";
+        salesStatus.className = "msg-ok";
+      }
+      const s = data.state, cap = Number(s.capital), res = Number(s.reserved), lock = Number(s.locked);
+      const free = cap - res - lock;
+      $("s-cap").textContent = fmt(cap); $("s-res").textContent = fmt(res);
+      $("s-lock").textContent = lock ? `${fmt(lock)} (unlocks ${new Date(Number(s.unlock_at) * 1000).toLocaleString()})` : "0";
+      $("s-free").textContent = fmt(free);
+      const bar = $("bar"); bar.replaceChildren();
+      for (const [v, color] of [[res, "var(--reserved)"], [lock, "var(--locked)"]]) {
+        const span = document.createElement("span");
+        span.style.width = cap ? `${(100 * v) / cap}%` : "0"; span.style.background = color; bar.append(span);
+      }
+      bar.setAttribute("aria-label", `Reserved ${fmt(res)}, queued ${fmt(lock)}, free ${fmt(free)} of ${fmt(cap)} pool capital`);
+      $("vault-id").textContent = data.vault;
+      $("vault-link").href = `https://stellar.expert/explorer/testnet/contract/${data.vault}`;
+      $("perpdex-id").textContent = data.perpdex;
+      $("perpdex-link").href =
+        `https://stellar.expert/explorer/testnet/contract/${data.perpdex}`;
+
+      const exposureContainer = $("exposure");
+      exposureContainer.replaceChildren();
+      const heading = document.createElement("h3");
+      heading.textContent = "Reserved by Asset";
+      exposureContainer.append(heading);
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      for (const title of ["Asset", "Long", "Short"]) {
+        const th = document.createElement("th");
+        th.textContent = title;
+        headerRow.append(th);
+      }
+      thead.append(headerRow);
+      const tbody = document.createElement("tbody");
+      for (const asset of ["XLM", "BTC", "ETH"]) {
+        const exposure = data.exposure?.[asset];
+        const tr = document.createElement("tr");
+        for (const value of [
+          asset,
+          `${fmt(exposure?.long ?? 0)} USDC`,
+          `${fmt(exposure?.short ?? 0)} USDC`
+        ]) {
+          const td = document.createElement("td");
+          td.textContent = value;
+          tr.append(td);
+        }
+        tbody.append(tr);
+      }
+      table.append(thead, tbody);
+      exposureContainer.append(table);
+      document.querySelectorAll(".asset-code").forEach((e) => (e.textContent = data.asset.code));
+      if (data.wallet) {
+        $("bal").textContent = data.wallet.balance === null ? "no trustline yet" : `${fmt(data.wallet.balance)} ${data.asset.code}`;
+        $("wres").textContent = fmt(data.wallet.reserved);
+      }
+      await renderPositions();
+      await renderMine();
+    }
+
+    async function renderPositions() {
+      const container = $("positions");
+      const select = $("protect-position");
+      container.replaceChildren();
+      select.replaceChildren();
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Select an open position";
+      select.append(placeholder);
+      const ids = myPositions();
+      if (!ids.length) {
+        const p = document.createElement("p");
+        p.className = "muted";
+        p.textContent = "No positions yet.";
+        container.append(p);
+        return;
+      }
+      const table = document.createElement("table");
+      const tbody = document.createElement("tbody");
+      for (const id of ids) {
+        const position = await api(`/api/position?id=${encodeURIComponent(id)}`).catch(() => null);
+        if (!position) continue;
+        const isOpen = Number(position.status) === 0;
+        const direction = Number(position.direction) === 0 ? "Long" : "Short";
+        const tr = document.createElement("tr");
+        const values = [
+          String(id).slice(0, 10) + "…",
+          position.asset,
+          direction,
+          isOpen ? "Open" : Number(position.status) === 1 ? "Closed" : "Liquidated"
+        ];
+        for (const value of values) {
+          const td = document.createElement("td");
+          td.textContent = String(value);
+          tr.append(td);
+        }
+        const actions = document.createElement("td");
+        if (isOpen) {
+          const closeBtn = document.createElement("button");
+          closeBtn.textContent = "Close";
+          closeBtn.onclick = () => busy(closeBtn, async () => {
+            await action("Close position", {
+              action: "close",
+              positionId: id
+            });
+          });
+          const closePriceBtn = document.createElement("button");
+          closePriceBtn.textContent = "Close at price";
+          closePriceBtn.onclick = () => busy(closePriceBtn, async () => {
+            const closingPrice = $("close-price").value.trim();
+            if (!closingPrice || !Number.isFinite(Number(closingPrice)) || Number(closingPrice) <= 0) {
+              throw new Error("Enter a valid closing price greater than zero.");
+            }
+            await action("Close position at price", {
+              action: "close",
+              positionId: id,
+              price: closingPrice
+            });
+          });
+          const halveBtn = document.createElement("button");
+          halveBtn.textContent = "Halve";
+          halveBtn.onclick = () => busy(halveBtn, async () => {
+            const currentSize = BigInt(position.size);
+            const remainingSize = currentSize / 2n;
+            if (remainingSize <= 0n || remainingSize >= currentSize) {
+              throw new Error("This position cannot be halved.");
+            }
+            const whole = remainingSize / 10000000n;
+            const fraction = (remainingSize % 10000000n).toString().padStart(7, "0");
+            const size = `${whole}.${fraction}`;
+            await action("Halve position", { action: "reduce", positionId: id, size });
+          });
+          const liquidateBtn = document.createElement("button");
+          liquidateBtn.textContent = "Liquidate";
+          liquidateBtn.className = "danger";
+          liquidateBtn.onclick = () => busy(liquidateBtn, async () => {
+            await action("Liquidate position", {
+              action: "liquidate",
+              positionId: id
+            });
+          });
+
+          actions.append(
+            closeBtn,
+            closePriceBtn,
+            halveBtn,
+            liquidateBtn
+          );
+
+        }
+        tr.append(actions);
+        tbody.append(tr);
+        if (isOpen) {
+          const option = document.createElement("option");
+          option.value = id;
+          option.textContent = `${position.asset} ${direction} — ${String(id).slice(0, 10)}…`;
+          select.append(option);
+        }
+      }
+      table.append(tbody);
+      container.append(table);
+    }
+    async function renderMine() {
+      const container = $("mine");
+      const ids = myIds();
+      container.replaceChildren();
+      if (!ids.length) {
+        const p = document.createElement("p");
+        p.className = "muted";
+        p.textContent = "No protections yet.";
+        container.append(p);
+        return;
+      }
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+      for (const label of [
+        "ID",
+        "Asset",
+        "Direction",
+        "Status",
+        "Expires",
+        "Settlement price",
+        "Payout",
+        "Action"
+      ]) {
+        const th = document.createElement("th");
+        th.textContent = label;
+        headerRow.append(th);
+      }
+      thead.append(headerRow);
+      const tbody = document.createElement("tbody");
+      for (const id of ids) {
+        const p = await api(`/api/protection?id=${encodeURIComponent(id)}`).catch(() => null);
+        if (!p) continue;
+        const settled = Number(p.status) === 1;
+        const now = Math.floor(Date.now() / 1000);
+        const expiresAt = Number(p.t_expire);
+        const activeAt = Number(p.t_active);
+
+        const status = settled ? "Settled" : now < activeAt ? "Pending" : "Active";
+        const direction = Number(p.direction) === 0 ? "Long" : "Short";
+        const tr = document.createElement("tr");
+        const values = [
+          String(id),
+          String(p.asset),
+          direction,
+          status,
+          new Date(expiresAt * 1000).toLocaleString(),
+          settled ? `$${price(p.settle_price)}` : "—",
+          settled ? `${fmt(p.payout)} USDC` : "—"
+        ];
+        for (const value of values) {
+          const td = document.createElement("td");
+          td.textContent = value;
+          tr.append(td);
+        }
+        const actionCell = document.createElement("td");
+        if (!settled) {
+          const canSettle = now >= expiresAt;
+          const button = document.createElement("button");
+          button.textContent = canSettle ? "Settle" : "Settle early";
+          button.onclick = () => busy(button, async () => {
+            const receipt = await action(
+              canSettle ? `Settle #${id}` : `Settle early #${id}`,
+              {
+                action: canSettle ? "settle" : "settle_early",
+                id: String(id)
+              }
+            );
+            if (receipt) {
+              await renderMine();
+            }
+          });
+          actionCell.append(button);
+        }
+        tr.append(actionCell);
+        tbody.append(tr);
+      }
+      table.append(thead, tbody);
+      container.append(table);
+    }
+
+    function renderQuote(q) {
+      const box = $("quote"); box.hidden = false; box.replaceChildren();
+      const add = (tag, text, cls) => { const e = document.createElement(tag); e.textContent = text; if (cls) e.className = cls; box.append(e); return e; };
+      if (q.rejected) {
+        add("p", explain(q.rejected), "msg-bad");
+        if (q.quote) add("p", `Max payout asked: ${fmt(q.quote.max_payout)} · free capital: ${fmt(Number(data.state.capital) - Number(data.state.reserved) - Number(data.state.locked))}`, "muted");
+        return;
+      }
+      const t = q.quote, b = q.breakdown, long = t.direction === "long";
+      const rows = [
+        ["Protection start", `$${price(t.p_start)}`],
+        [long ? "Covers a fall down to" : "Covers a rise up to", `$${price(t.p_end)}`],
+        ["Maximum payout (reserved)", `${fmt(t.max_payout)} USDC`],
+        ["Volatility used", `${(t.vol_bps / 100).toFixed(1)}% (${long ? "downside" : "upside"})`],
+        ["Fair price", `${b.fair.toFixed(2)} USDC`],
+        ["Loadings", `utilization ×${b.mU.toFixed(3)}, margin ×1.05`],
+        ["Premium → pool", `${fmt(t.premium)} USDC`],
+        ["Protection fee → TOSBI", `${fmt(t.fee)} USDC`],
+      ];
+      const table = document.createElement("table"); const body = document.createElement("tbody");
+      for (const [k, v] of rows) {
+        const tr = document.createElement("tr"); const th = document.createElement("th"); th.scope = "row"; th.textContent = k;
+        const td = document.createElement("td"); td.textContent = v; tr.append(th, td); body.append(tr);
+      }
+      table.append(body); box.append(table);
+      add("p", `Total cost: ${fmt(BigInt(t.premium) + BigInt(t.fee))} USDC`, "total");
+      const status = add("p", "", "muted"); status.setAttribute("role", "status");
+      const buy = document.createElement("button"); buy.className = "primary"; buy.textContent = "Buy protection";
+      box.append(buy);
+      clearInterval(timer);
+      const tick = () => {
+        const left = Number(t.expires_at) - Math.floor(Date.now() / 1000);
+        status.textContent = left > 0 ? `Quote valid for ${left}s` : "Quote expired. Get a new quote.";
+        if (left <= 0) { buy.disabled = true; buy.dataset.expired = "1"; clearInterval(timer); }
+      };
+      tick(); timer = setInterval(tick, 1000);
+      buy.onclick = () => busy(buy, async () => {
+        const r = await signAndSubmit(q.tx, "Buy protection");
+        if (!r) return;
+        clearInterval(timer);
+        $("quote").hidden = true;
+        const ids = myIds(); ids.push(String(r.result)); saveIds("ids", ids);
+        log("ok", `Protection #${r.result} is live`);
+        await renderMine();
+      });
+    }
+
+    async function quote(body) {
+      const q = await api("/api/quote", { trader: me, ...body });
+      if (q.rejected) log("bad", explain(q.rejected));
+      renderQuote(q);
+    }
+
+    async function connect() {
+      if (!data) await refresh();
+      if (!F || !(await F.isConnected()).isConnected) {
+        $("banner").textContent = "Freighter is not installed. Install it from freighter.app, switch it to Testnet, then reload.";
+        return;
+      }
+      const acc = await F.requestAccess();
+      if (acc.error) throw new Error(acc.error.message || acc.error);
+      const net = await F.getNetworkDetails();
+      if (net.networkPassphrase !== data.network) { $("banner").textContent = "Switch Freighter to Testnet, then connect again."; return; }
+      me = acc.address; $("banner").textContent = "";
+      $("who").textContent = `${me.slice(0, 6)}…${me.slice(-6)}`;
+      $("connect").textContent = "Connected";
+      document.querySelectorAll("button").forEach((b) => (b.disabled = false));
+      await refresh();
+    }
+
+    $("connect").onclick = () => busy($("connect"), connect);
+    $("fund-xlm").onclick = () => busy($("fund-xlm"), async () => {
+      const r = await fetch(`https://friendbot.stellar.org/?addr=${me}`);
+      if (!r.ok) throw new Error("Friendbot refused (already funded?)");
+      log("ok", "Funded with testnet XLM"); await refresh();
+    });
+    $("fund-usdc").onclick = () => busy($("fund-usdc"), async () => {
+      if (data.wallet.balance === null && !(await action(`Add ${data.asset.code} trustline`, { action: "trust" }))) return;
+      const r = await api("/api/faucet", { addr: me });
+      log(r.status === "SUCCESS" ? "ok" : "bad", `Faucet sent 1,000 ${data.asset.code}`, r.hash);
+      await refresh();
+    });
+    $("position-form").onsubmit = (e) => {
+      e.preventDefault();
+      busy($("open-position"), async () => {
+        if (!me) {
+          throw new Error("Connect Freighter before opening a position.");
+        }
+        const asset = $("position-asset").value;
+        const direction = $("position-direction").value;
+        const notional = $("position-notional").value.trim();
+        if (!Number.isFinite(Number(notional)) || Number(notional) <= 0) {
+          throw new Error("Position size must be greater than zero.");
+        }
+        const receipt = await action("Open position", {
+          action: "open",
+          asset,
+          direction,
+          notional
+        });
+        if (!receipt) return;
+        const positionId = String(receipt.result);
+        if (!/^[0-9a-f]{64}$/.test(positionId)) {
+          throw new Error("Position opened, but the returned position ID is invalid.");
+        }
+        const ids = myPositions();
+        if (!ids.includes(positionId)) {
+          ids.push(positionId);
+          saveIds("positions", ids);
+        }
+        log("ok", `Position opened: ${positionId.slice(0, 10)}…`);
+        await renderPositions();
+      });
+    };
+    $("exceed").onclick = () => busy($("exceed"), async () => {
+      if (!me) {
+        throw new Error("Connect Freighter first.");
+      }
+      const btn = $("exceed");
+      let positionId = btn.dataset.positionId;
+      if (!positionId) {
+        const receipt = await action("Open 60,000 USD XLM LONG", {
+          action: "open",
+          asset: "XLM",
+          direction: "long",
+          notional: "60000"
+        });
+        if (!receipt) return;
+        positionId = String(receipt.result);
+        if (!/^[0-9a-f]{64}$/.test(positionId)) {
+          throw new Error("Invalid position ID returned by PerpDEX.");
+        }
+        const ids = myPositions();
+        if (!ids.includes(positionId)) {
+          ids.push(positionId);
+          saveIds("positions", ids);
+        }
+        btn.dataset.positionId = positionId;
+        btn.textContent = "Quote 50,000 USDC at 50%";
+        log("ok", "Large position opened. Wait until it is old enough, then click again.");
+        await renderPositions();
+        return;
+      }
+      await quote({
+        positionId,
+        amount: "50000",
+        duration: 86400,
+        rangeBps: 5000
+      });
+    });
+    $("b-dep").onclick = () => busy($("b-dep"), () => action("Deposit capital", { action: "deposit", amount: $("dep").value.trim() }));
+    $("b-wd").onclick = () => busy($("b-wd"), () => action("Withdrawal request", { action: "withdraw_request", amount: $("wd").value.trim() }));
+    $("b-wx").onclick = () => busy($("b-wx"), () => action("Execute withdrawal", { action: "withdraw_execute" }));
+    $("b-pause").onclick = () => busy(
+      $("b-pause"),
+      () => action("Pause protection sales", {
+        action: "pause"
+      })
+    );
+    refresh().catch((e) => log("bad", `Could not load vault state: ${e.message}`));
+    setInterval(() => refresh().catch(() => { }), 15000);
+  </script>
 </body>
+
 </html>

@@ -296,12 +296,49 @@ async function route(req: Request, env: Env): Promise<Response> {
       });
     }
 
+    if (action === "reduce") {
+      const size = parseUnits(body.size);
+      if (size <= 0n) {
+        throw new BadRequest("Remaining position size must be positive");
+      }
+      return json({
+        tx: await prepareInvoke(
+          n,
+          source,
+          env.PERPDEX_ID,
+          "reduce",
+          [
+            positionId(body.positionId),
+            nativeToScVal(size, { type: "i128" })
+          ]
+        )
+      });
+    }
+
+    if (action === "liquidate") {
+      return json({
+        tx: await prepareInvoke(
+          n,
+          source,
+          env.PERPDEX_ID,
+          "liquidate",
+          [
+            positionId(body.positionId),
+            body.price === undefined || body.price === null
+              ? xdr.ScVal.scvVoid()
+              : i128(body.price)
+          ]
+        )
+      });
+    }
+
     const call: Record<string, () => [string, xdr.ScVal[]]> = {
       deposit: () => ["deposit_capital", [addr(source), i128(body.amount)]],
       release: () => ["release", [addr(source), u64(body.id)]],
       withdraw_request: () => ["withdraw_request", [i128(body.amount)]],
       withdraw_execute: () => ["withdraw_execute", []],
       pause: () => ["pause", [addr(source)]],
+      settle: () => ["settle", [u64(body.id)]],
       settle_early: () => ["settle_early", [u64(body.id)]],
     };
 
